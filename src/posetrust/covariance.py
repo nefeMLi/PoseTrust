@@ -13,10 +13,14 @@ sparse information matrix is dense, so forming it costs O(n^3) time and O(n^2)
 memory in the number of poses, while only a tiny fraction of the entries are
 ever wanted -- the per-pose diagonal blocks and a handful of pairs. The
 Takahashi recursion computes exactly the entries inside the sparsity pattern
-of the Cholesky factor and nothing else. The recursion below is the general
-one; the sparse pattern that makes it cheap arrives with linear_solve.py in
-week 2, and this dense implementation stays as the reference it is checked
-against.
+of the Cholesky factor and nothing else.
+
+The recursion below is the general one, run against a dense factor. Restricting
+it to a sparse pattern is what makes it cheap, and is the obvious optimisation
+if the graphs ever grow enough to need it -- at the sizes this study uses, a
+few hundred poses, each solve is milliseconds and the dense form has never been
+the bottleneck. Writing the sparse version before that is true would be
+optimising against a guess.
 """
 
 from __future__ import annotations

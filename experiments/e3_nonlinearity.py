@@ -355,6 +355,31 @@ def build_coverage_figure():
                 color=colour,
                 label=f"sd {sigma:g}",
             )
+        # A level the legend offers but this panel does not draw was rejected
+        # for convergence, not lost in rendering. Say which, or its absence
+        # reads as a bug rather than as a result.
+        absent = [
+            sigma
+            for sigma in shown
+            if not any(
+                r["group"] == name
+                and abs(r["rotation_sigma"] - sigma) < 1e-9
+                and r["usable"]
+                for r in rows
+            )
+        ]
+        if absent:
+            levels = ", ".join(f"{s:g}" for s in absent)
+            ax.annotate(
+                f"sd {levels} omitted: did not converge",
+                (0.5, 0.97),
+                xycoords="axes fraction",
+                ha="center",
+                va="top",
+                fontsize=8.5,
+                color=INK_MUTED,
+            )
+
         ax.set_xlim(0.45, 1.02)
         ax.set_ylim(0.0, 1.02)
         label(
