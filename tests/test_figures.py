@@ -382,3 +382,37 @@ def test_saved_figures_are_byte_identical_when_regenerated(tmp_path, monkeypatch
     second = _common.save_figure(BUILDERS["e2"](), "determinism").read_bytes()
     assert first == second, "figure output is not reproducible"
 
+
+def test_rejected_conditions_are_not_plotted_as_measurements():
+    """A condition the analysis threw out must not appear as a datum.
+
+    E3 rejects any condition converging on under half its runs, and the first
+    version of the figure drew one of those identically to the valid points.
+    A reader had no way to know one of the eight markers was a result the
+    study had already declined to report.
+    """
+    from _common import read_results
+
+    rows = read_results("e3_nonlinearity")
+    rejected = [r for r in rows if not r["usable"]]
+    assert rejected, "fixture no longer exercises this; pick another sweep"
+
+    for builder in (BUILDERS["e3"], BUILDERS["e3_coverage"]):
+        figure = builder()
+        plotted = 0
+        for ax in figure.axes:
+            for container in ax.containers:
+                if hasattr(container, "has_yerr"):
+                    plotted += len(container[0].get_xdata())
+            plotted += sum(
+                1
+                for line in ax.lines
+                if line.get_label() and not line.get_label().startswith("_")
+                and "ideal" not in line.get_label()
+                and "calibrated" not in line.get_label()
+            )
+        usable = sum(1 for r in rows if r["usable"])
+        assert plotted <= usable, (
+            f"figure draws {plotted} series for {usable} usable conditions"
+        )
+

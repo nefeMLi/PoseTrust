@@ -29,7 +29,6 @@ import sys
 
 import numpy as np
 from _common import (
-    BAND,
     INK,
     INK_MUTED,
     OBSERVED,
@@ -246,30 +245,52 @@ def build_figure():
         ci_low = np.array([r["ci_low"] for r in series])
         ci_high = np.array([r["ci_high"] for r in series])
 
-        ax.axhspan(
-            series[0]["band_low"],
-            series[0]["band_high"],
-            color=BAND,
-            alpha=0.9,
-            linewidth=0,
-            label="chi-squared acceptance band",
-        )
+        # No acceptance band on this panel. It is 3% wide and the axis spans
+        # two decades, so it renders as a line indistinguishable from the one
+        # below it -- a legend entry pointing at something invisible. With
+        # intervals drawn, whether a point sits above 1.0 is readable directly;
+        # the band is in E2's figure, where the scale can show it.
         ax.axhline(
             1.0, color=INK_MUTED, linewidth=2.0, linestyle="--", label="calibrated"
         )
-        ax.errorbar(
-            x,
-            ratio,
-            yerr=[ratio - ci_low, ci_high - ratio],
-            fmt="o",
-            markersize=8,
-            linewidth=0,
-            elinewidth=2.0,
-            capsize=4,
-            color=OBSERVED,
-            ecolor=OBSERVED,
-            label="observed, 95% interval",
-        )
+
+        # Conditions the analysis rejected are not estimates and must not be
+        # drawn as though they were. Those that converged but lost runs are
+        # biased towards calibration, so they are drawn hollow: lower bounds.
+        usable = np.array([r["usable"] for r in series])
+        complete = np.array([r["converged_fraction"] >= 0.9 for r in series])
+        for mask, fill, tag in (
+            (usable & complete, OBSERVED, "observed, 95% interval"),
+            (usable & ~complete, "none", "lower bound, runs dropped"),
+        ):
+            if not mask.any():
+                continue
+            ax.errorbar(
+                x[mask],
+                ratio[mask],
+                yerr=[(ratio - ci_low)[mask], (ci_high - ratio)[mask]],
+                fmt="o",
+                markersize=8,
+                markerfacecolor=fill,
+                markeredgecolor=OBSERVED,
+                markeredgewidth=2.0,
+                linewidth=0,
+                elinewidth=2.0,
+                capsize=4,
+                ecolor=OBSERVED,
+                label=tag,
+            )
+        for position, row in zip(x[~usable], np.array(series)[~usable]):
+            ax.annotate(
+                f"did not\nconverge\n({row['converged']}/{row['n_runs']})",
+                (position, 1.0),
+                textcoords="offset points",
+                xytext=(0, 14),
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                color=INK_MUTED,
+            )
         ax.set_yscale("log")
         ax.set_xticks(x)
         ax.set_xticklabels([f"{r['rotation_sigma']:g}" for r in series])
@@ -316,7 +337,11 @@ def build_coverage_figure():
             match = [
                 r
                 for r in rows
-                if r["group"] == name and abs(r["rotation_sigma"] - sigma) < 1e-9
+                if r["group"] == name
+                and abs(r["rotation_sigma"] - sigma) < 1e-9
+                # a condition the analysis rejected is not a measurement, so
+                # its curve does not belong on the same axes as ones that are
+                and r["usable"]
             ]
             if not match:
                 continue
