@@ -260,18 +260,16 @@ def build_figure():
             alpha=0.6,
             label=f"expected mean = {dof}",
         )
-        label(ax, f"{name} - NEES distribution", "NEES", "density")
-        ax.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
-        ax.text(
-            0.97,
-            0.93,
-            f"mean/dof = {summary['ratio']:.4f}\n{summary['verdict']}",
-            transform=ax.transAxes,
-            ha="right",
-            va="top",
-            fontsize=9,
-            color=INK,
+        label(
+            ax,
+            f"{name} - NEES distribution    "
+            f"mean/dof {summary['ratio']:.4f}, {summary['verdict']}",
+            "NEES",
+            "density",
         )
+        # upper right is the only corner clear of both the bars and the curve
+        # in each panel; upper left put ~1400 px^2 of data under the legend
+        ax.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper right")
 
         # Right: do the credible ellipsoids cover what they claim to?
         ax = axes[row_index][1]
