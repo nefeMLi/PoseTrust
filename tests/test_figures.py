@@ -17,6 +17,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 EXPERIMENTS = Path(__file__).resolve().parent.parent / "experiments"
@@ -228,10 +229,22 @@ def test_no_mark_is_drawn_without_a_legend_entry(any_figure):
     first: visible, meaningful, and impossible for a reader to identify.
     """
     for index, ax in enumerate(any_figure.axes):
+        # An errorbar is one labelled series drawn as several Line2Ds -- its
+        # marker and caps carry no label of their own, but the container's
+        # legend entry explains all of them.
+        owned = set()
+        for container in ax.containers:
+            for part in getattr(container, "lines", ()):
+                if part is None:
+                    continue
+                parts = part if isinstance(part, tuple) else (part,)
+                owned.update(id(p) for p in parts)
+
         anonymous = [
             line.get_label()
             for line in ax.lines
-            if not line.get_label() or line.get_label().startswith("_")
+            if id(line) not in owned
+            and (not line.get_label() or line.get_label().startswith("_"))
         ]
         assert not anonymous, f"panel {index} draws unexplained marks: {anonymous}"
 
@@ -308,3 +321,34 @@ def test_panel_titles_fit_inside_their_panel(any_figure):
         assert width <= available, (
             f"panel {index} title is {width:.0f}px in a {available:.0f}px panel"
         )
+
+
+def test_point_estimates_carry_intervals():
+    """HYPOTHESES.md: "Every point estimate gets an interval."
+
+    A sweep plotted as bare markers invites the reader to see structure in
+    what is sampling noise -- which is exactly what the first version of the
+    E2 figure did, with a dramatic-looking zigzag entirely inside the band.
+    The acceptance band is not a substitute: it says what a calibrated solver
+    is allowed to produce, not how precisely this sweep measured it.
+    """
+    figure = BUILDERS["e2"]()
+    for index, ax in enumerate(figure.axes):
+        bars = [c for c in ax.containers if hasattr(c, "has_yerr")]
+        assert bars, f"panel {index} plots estimates with no interval"
+        assert any(c.has_yerr for c in bars), f"panel {index} has empty error bars"
+
+
+def test_sweep_conditions_are_evenly_spaced():
+    """Unevenly spaced conditions plotted on a linear axis distort the shape.
+
+    E2's densities run 0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.2: on a linear axis the
+    crowded low end exaggerates small differences into a visual trend. They
+    are separate experiments, so they are placed as ordered categories.
+    """
+    figure = BUILDERS["e2"]()
+    for ax in figure.axes:
+        ticks = ax.get_xticks()
+        gaps = np.diff(ticks)
+        assert np.allclose(gaps, gaps[0]), "sweep conditions are not evenly placed"
+

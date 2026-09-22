@@ -67,8 +67,16 @@ def condition(lie, density: float, n_runs: int, seed: int) -> dict:
     fraction = float(converged.mean())
     usable = fraction >= MIN_CONVERGED_FRACTION
 
-    report = ConsistencyReport(result.nees_full[converged], result.free_dof, ALPHA)
+    values = result.nees_full[converged]
+    report = ConsistencyReport(values, result.free_dof, ALPHA)
     low, high = report.acceptance
+
+    # Interval on the estimate itself, distinct from the acceptance band:
+    # the band says what a calibrated solver is allowed to produce, this says
+    # how well this sweep pinned down what it actually produced.
+    rng = np.random.default_rng(seed)
+    boot = rng.choice(values, size=(2000, values.size), replace=True).mean(axis=1)
+    ci_low, ci_high = np.percentile(boot, [2.5, 97.5]) / report.dof
     closures = len(scenario.edges) - (N_POSES - 1)
     return {
         "group": None,
@@ -83,6 +91,8 @@ def condition(lie, density: float, n_runs: int, seed: int) -> dict:
         "ratio": report.mean / report.dof,
         "band_low": low / report.dof,
         "band_high": high / report.dof,
+        "ci_low": float(ci_low),
+        "ci_high": float(ci_high),
         "pvalue": report.pvalue,
         "verdict": report.verdict if usable else "convergence failure",
     }
@@ -143,6 +153,24 @@ def report_console(rows) -> None:
             f"  {name}: sparse end {sparsest:.3f}, dense end {densest:.3f}, "
             f"monotone {'yes' if falling else 'NO'}"
         )
+
+    # A null is only worth anything next to a statement of what it could have
+    # detected. Here the intervals are as wide as the whole spread of the
+    # estimates, which is the honest reading of the apparent scatter.
+    widths = [r["ci_high"] - r["ci_low"] for r in rows if r["usable"]]
+    spread = max(r["ratio"] for r in rows if r["usable"]) - min(
+        r["ratio"] for r in rows if r["usable"]
+    )
+    covering = sum(r["ci_low"] <= 1.0 <= r["ci_high"] for r in rows if r["usable"])
+    print(
+        f"\n  Resolution: 95% intervals span {min(widths):.3f}-{max(widths):.3f}, "
+        f"against a total spread of {spread:.3f} across the whole sweep."
+    )
+    print(
+        f"  Differences below roughly {max(widths) / 2:.1%} of the state dimension "
+        f"are not resolvable here, and nothing larger is present."
+    )
+    print(f"  {covering} of {len(widths)} intervals cover perfect calibration.")
     print()
 
 
@@ -156,15 +184,18 @@ def build_figure():
         series = sorted(
             (r for r in rows if r["group"] == name), key=lambda r: r["density"]
         )
-        density = np.array([r["density"] for r in series])
         ratio = np.array([r["ratio"] for r in series])
-        low = np.array([r["band_low"] for r in series])
-        high = np.array([r["band_high"] for r in series])
+        ci_low = np.array([r["ci_low"] for r in series])
+        ci_high = np.array([r["ci_high"] for r in series])
+        # Densities are unevenly spaced and each is a separate experiment, so
+        # they are placed as ordered categories. On a linear axis the crowded
+        # low end turns differences of a few percent into a dramatic zigzag,
+        # and a connecting line would imply a trend the analysis says is absent.
+        x = np.arange(len(series))
 
-        ax.fill_between(
-            density,
-            low,
-            high,
+        ax.axhspan(
+            series[0]["band_low"],
+            series[0]["band_high"],
             color=BAND,
             alpha=0.9,
             linewidth=0,
@@ -173,15 +204,22 @@ def build_figure():
         ax.axhline(
             1.0, color=INK_MUTED, linewidth=2.0, linestyle="--", label="calibrated"
         )
-        ax.plot(
-            density,
+        ax.errorbar(
+            x,
             ratio,
-            marker="o",
+            yerr=[ratio - ci_low, ci_high - ratio],
+            fmt="o",
             markersize=8,
-            linewidth=2.0,
+            linewidth=0,
+            elinewidth=2.0,
+            capsize=4,
             color=OBSERVED,
-            label="observed",
+            ecolor=OBSERVED,
+            label="observed, 95% interval",
         )
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{r['density']:g}" for r in series])
+        ax.set_xlim(-0.5, len(series) - 0.5)
         # linear, not log: the whole sweep spans 0.97 to 1.04, and a log
         # scale would compress the only thing this figure has to show
         label(
