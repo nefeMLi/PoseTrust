@@ -113,3 +113,96 @@ def test_grid_is_recessive_and_behind_the_data(e1_figure):
         assert ax.get_axisbelow() is True
         assert not ax.spines["top"].get_visible()
         assert not ax.spines["right"].get_visible()
+
+
+def drawn_texts(fig):
+    """Every text the renderer will actually draw.
+
+    Ticks outside the view limits are computed but never drawn, so including
+    them produces phantom collisions -- an earlier version of this check
+    flagged two and both were invisible.
+    """
+    out = []
+    for ax in fig.axes:
+        for text in [ax._left_title, ax.xaxis.label, ax.yaxis.label, *ax.texts]:
+            if text.get_text() and text.get_visible():
+                out.append(text)
+        for axis, (low, high) in (
+            (ax.xaxis, ax.get_xlim()),
+            (ax.yaxis, ax.get_ylim()),
+        ):
+            for text, loc in zip(axis.get_ticklabels(), axis.get_ticklocs()):
+                if text.get_text() and text.get_visible() and low <= loc <= high:
+                    out.append(text)
+        legend = ax.get_legend()
+        if legend:
+            out.extend(t for t in legend.get_texts() if t.get_text())
+    if fig._suptitle and fig._suptitle.get_text():
+        out.append(fig._suptitle)
+    return out
+
+
+def laid_out(fig):
+    """Run the layout engine and return a renderer that can measure text."""
+    import io
+
+    from _common import _svg_canvas
+
+    canvas_cls = _svg_canvas()
+    canvas_cls(fig)
+    fig.draw_without_rendering()
+    from matplotlib.backends.backend_svg import RendererSVG
+
+    width, height = fig.get_size_inches() * fig.dpi
+    return RendererSVG(width, height, io.StringIO()), width, height
+
+
+def overlap_area(a, b) -> float:
+    if a.x1 <= b.x0 or b.x1 <= a.x0 or a.y1 <= b.y0 or b.y1 <= a.y0:
+        return 0.0
+    return (min(a.x1, b.x1) - max(a.x0, b.x0)) * (min(a.y1, b.y1) - max(a.y0, b.y0))
+
+
+def test_no_drawn_text_escapes_the_canvas(e1_figure):
+    renderer, width, height = laid_out(e1_figure)
+    escaped = [
+        text.get_text()
+        for text in drawn_texts(e1_figure)
+        if (lambda b: b.x0 < -1 or b.y0 < -1 or b.x1 > width + 1 or b.y1 > height + 1)(
+            text.get_window_extent(renderer)
+        )
+    ]
+    assert not escaped, f"text clipped by the canvas edge: {escaped}"
+
+
+def test_no_drawn_labels_collide(e1_figure):
+    """The automated half of "render it and look at it".
+
+    A test cannot judge whether a chart reads well, but it can catch the
+    failure that most often makes one unreadable: labels printed on top of
+    each other once the data changes shape.
+    """
+    renderer, _, _ = laid_out(e1_figure)
+    boxes = [
+        (t.get_text(), t.get_window_extent(renderer)) for t in drawn_texts(e1_figure)
+    ]
+    collisions = [
+        (a[0], b[0])
+        for i, a in enumerate(boxes)
+        for b in boxes[i + 1 :]
+        if overlap_area(a[1], b[1]) > 4.0
+    ]
+    assert not collisions, f"overlapping labels: {collisions}"
+
+
+def test_panels_do_not_overlap_each_other(e1_figure):
+    renderer, _, _ = laid_out(e1_figure)
+    boxes = [ax.get_window_extent(renderer) for ax in e1_figure.axes]
+    clashes = [
+        (i, j)
+        for i in range(len(boxes))
+        for j in range(i + 1, len(boxes))
+        if overlap_area(boxes[i], boxes[j]) > 1.0
+    ]
+    assert not clashes, f"panels overlap: {clashes}"
+
