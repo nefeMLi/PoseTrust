@@ -71,11 +71,53 @@ def figure(nrows: int = 1, ncols: int = 1, size=(9.0, 4.2)):
     return fig, axes
 
 
+def _svg_canvas():
+    """The SVG canvas class, working around platforms that block Agg.
+
+    matplotlib's backend_svg imports backend_mixed, which imports backend_agg
+    at module level, so every output format transitively needs the Agg
+    extension even when nothing is rasterised. Where that extension cannot
+    load -- an unsigned native binary under Windows Smart App Control, for
+    instance -- a pure-vector figure is still perfectly renderable, because
+    RendererAgg is imported and then never instantiated.
+
+    So the import is retried against a stub that raises if it is ever really
+    used. The stub is installed only after the honest import has already
+    failed, so nothing changes on a machine where Agg works.
+    """
+    try:
+        from matplotlib.backends.backend_svg import FigureCanvasSVG
+    except ImportError:
+        import sys
+        import types
+
+        stub = types.ModuleType("matplotlib.backends._backend_agg")
+
+        class _RasterisationUnavailable:
+            def __init__(self, *_args, **_kwargs):
+                raise RuntimeError(
+                    "this figure needs raster rendering, which the Agg "
+                    "extension provides and this platform has blocked; "
+                    "remove the rasterised element or render elsewhere"
+                )
+
+        stub.RendererAgg = _RasterisationUnavailable
+        sys.modules.setdefault("matplotlib.backends._backend_agg", stub)
+        from matplotlib.backends.backend_svg import FigureCanvasSVG
+    return FigureCanvasSVG
+
+
 def save_figure(fig, name: str) -> Path:
-    """Write figures/<name>.png."""
+    """Write figures/<name>.svg.
+
+    Vector rather than raster: it renders natively in a README, stays sharp
+    at any zoom, is usually smaller for line work, and needs no rasteriser --
+    which is what makes the figures reproducible on a locked-down machine.
+    """
     FIGURES_DIR.mkdir(exist_ok=True)
-    path = FIGURES_DIR / f"{name}.png"
-    fig.savefig(path, dpi=160, facecolor=SURFACE)  # the only step needing a renderer
+    path = FIGURES_DIR / f"{name}.svg"
+    _svg_canvas()(fig)
+    fig.savefig(path, facecolor=SURFACE)  # the only step needing a renderer
     return path
 
 

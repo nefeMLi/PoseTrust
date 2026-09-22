@@ -14,4 +14,3 @@ wheels/
 .coverage
 htmlcov/
 .ruff_cache/
-figures/
