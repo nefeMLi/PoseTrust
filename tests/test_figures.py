@@ -206,3 +206,35 @@ def test_panels_do_not_overlap_each_other(e1_figure):
     ]
     assert not clashes, f"panels overlap: {clashes}"
 
+
+def test_no_mark_is_drawn_without_a_legend_entry(e1_figure):
+    """An unexplained line on a chart is chart junk.
+
+    The reference line marking the expected mean was drawn unlabelled at
+    first: visible, meaningful, and impossible for a reader to identify.
+    """
+    for index, ax in enumerate(e1_figure.axes):
+        anonymous = [
+            line.get_label()
+            for line in ax.lines
+            if not line.get_label() or line.get_label().startswith("_")
+        ]
+        assert not anonymous, f"panel {index} draws unexplained marks: {anonymous}"
+
+
+def test_legends_sit_in_the_same_place_in_every_panel(e1_figure):
+    """Small multiples repeat a layout; a moving legend makes the eye re-hunt it.
+
+    matplotlib's default loc="best" placed one legend mid-panel over the data
+    and the rest top-left, which is exactly the inconsistency to avoid.
+    """
+    renderer, _, _ = laid_out(e1_figure)
+    positions = []
+    for ax in e1_figure.axes:
+        legend = ax.get_legend()
+        box, axis_box = legend.get_window_extent(renderer), ax.get_window_extent(renderer)
+        positions.append((box.x0 - axis_box.x0) / axis_box.width)
+    assert max(positions) - min(positions) < 0.05, (
+        f"legends drift across panels: {[round(p, 2) for p in positions]}"
+    )
+
