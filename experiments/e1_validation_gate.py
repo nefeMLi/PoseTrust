@@ -238,7 +238,7 @@ def build_figure():
         ax = axes[row_index][0]
         ax.hist(
             values,
-            bins=28,
+            bins=20,
             density=True,
             color=OBSERVED,
             alpha=0.85,
@@ -253,9 +253,15 @@ def build_figure():
             linestyle="--",
             label=f"chi-squared({dof})",
         )
-        ax.axvline(dof, color=INK_MUTED, linewidth=1.0, alpha=0.6)
+        ax.axvline(
+            dof,
+            color=INK_MUTED,
+            linewidth=1.0,
+            alpha=0.6,
+            label=f"expected mean = {dof}",
+        )
         label(ax, f"{name} - NEES distribution", "NEES", "density")
-        ax.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED)
+        ax.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
         ax.text(
             0.97,
             0.93,
@@ -287,6 +293,17 @@ def build_figure():
         ax.set_ylim(0.4, 1.02)
         label(ax, f"{name} - ellipsoid coverage", "nominal level", "empirical coverage")
         ax.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
+        # the deviation is far smaller than the axis can resolve, so state it
+        ax.text(
+            0.97,
+            0.06,
+            f"max deviation {np.max(np.abs(nominal - empirical)):.3f}",
+            transform=ax.transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=9,
+            color=INK,
+        )
 
     fig.suptitle(
         "E1: where the Laplace covariance is exact, the solver agrees with it",
