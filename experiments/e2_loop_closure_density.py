@@ -177,7 +177,10 @@ def report_console(rows) -> None:
 def build_figure():
     """F1: NEES against loop-closure density, with the acceptance band shaded."""
     rows = read_results("e2_density")
-    fig, axes = figure(nrows=1, ncols=2, size=(10.0, 4.2))
+    # Shared y: the panels show the same quantity and the reader compares them
+    # directly. SE(3) really is tighter -- twice the degrees of freedom -- and
+    # separate scales would hide that behind a rescale.
+    fig, axes = figure(nrows=1, ncols=2, size=(10.0, 4.2), sharey=True)
 
     for index, (name, _) in enumerate(GROUPS):
         ax = axes[index]
@@ -226,7 +229,7 @@ def build_figure():
             ax,
             f"{name} - calibration against constraint density",
             "loop closures per pose",
-            "mean NEES / dof",
+            "mean NEES / dof" if index == 0 else "",
         )
 
     # One legend for the figure, not one per panel: both panels carry the same
