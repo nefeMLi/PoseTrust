@@ -222,19 +222,74 @@ def test_no_mark_is_drawn_without_a_legend_entry(e1_figure):
         assert not anonymous, f"panel {index} draws unexplained marks: {anonymous}"
 
 
-def test_legends_sit_in_the_same_place_in_every_panel(e1_figure):
-    """Small multiples repeat a layout; a moving legend makes the eye re-hunt it.
+def ink_under(ax, box, renderer) -> float:
+    """Area of drawn data falling inside a box, in square pixels."""
+    total = 0.0
+    for patch in ax.patches:
+        pb = patch.get_window_extent(renderer)
+        width = min(pb.x1, box.x1) - max(pb.x0, box.x0)
+        height = min(pb.y1, box.y1) - max(pb.y0, box.y0)
+        if width > 0 and height > 0:
+            total += width * height
+    for line in ax.lines:
+        xy = ax.transData.transform(line.get_xydata())
+        inside = (
+            (xy[:, 0] >= box.x0)
+            & (xy[:, 0] <= box.x1)
+            & (xy[:, 1] >= box.y0)
+            & (xy[:, 1] <= box.y1)
+        ).sum()
+        total += inside * 6.0
+    return total
 
-    matplotlib's default loc="best" placed one legend mid-panel over the data
-    and the rest top-left, which is exactly the inconsistency to avoid.
+
+def test_no_annotation_is_laid_over_the_data(e1_figure):
+    """Legends and labels must not sit on top of the marks they describe.
+
+    This is the check that was missing when the label-collision test passed a
+    figure whose legend covered 1400 px^2 of histogram: comparing text against
+    text says nothing about text against data.
     """
     renderer, _, _ = laid_out(e1_figure)
-    positions = []
-    for ax in e1_figure.axes:
-        legend = ax.get_legend()
-        box, axis_box = legend.get_window_extent(renderer), ax.get_window_extent(renderer)
-        positions.append((box.x0 - axis_box.x0) / axis_box.width)
-    assert max(positions) - min(positions) < 0.05, (
-        f"legends drift across panels: {[round(p, 2) for p in positions]}"
-    )
+    for index, ax in enumerate(e1_figure.axes):
+        boxes = [ax.get_legend().get_window_extent(renderer)]
+        boxes += [t.get_window_extent(renderer) for t in ax.texts]
+        for box in boxes:
+            covered = ink_under(ax, box, renderer)
+            assert covered < 1.0, f"panel {index} hides {covered:.0f} px^2 of data"
 
+
+def test_legend_placement_is_consistent_within_a_chart_type(e1_figure):
+    """Panels showing the same chart should place the legend the same way.
+
+    Deliberately per chart type rather than across the whole figure: an
+    earlier version demanded one position everywhere, and satisfying it drove
+    the legend onto the histogram. Not obscuring the data outranks symmetry.
+    """
+    renderer, _, _ = laid_out(e1_figure)
+
+    def position(ax):
+        box, axis_box = (
+            ax.get_legend().get_window_extent(renderer),
+            ax.get_window_extent(renderer),
+        )
+        return (box.x0 - axis_box.x0) / axis_box.width
+
+    distributions = [position(e1_figure.axes[i]) for i in (0, 2)]
+    coverages = [position(e1_figure.axes[i]) for i in (1, 3)]
+    assert abs(distributions[0] - distributions[1]) < 0.05
+    assert abs(coverages[0] - coverages[1]) < 0.05
+
+
+def test_panel_titles_fit_inside_their_panel(e1_figure):
+    """Titles now carry the headline number, so they can overflow."""
+    renderer, _, _ = laid_out(e1_figure)
+    for index, ax in enumerate(e1_figure.axes):
+        title = ax._left_title
+        if not title.get_text():
+            continue
+        width = title.get_window_extent(renderer).width
+        available = ax.get_window_extent(renderer).width
+        assert width <= available, (
+            f"panel {index} title is {width:.0f}px in a {available:.0f}px panel"
+        )
