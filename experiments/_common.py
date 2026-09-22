@@ -47,7 +47,13 @@ def read_results(name: str):
     return pq.read_table(RESULTS_DIR / f"{name}.parquet").to_pylist()
 
 
-def figure(nrows: int = 1, ncols: int = 1, size=(9.0, 4.2), sharey: bool = False):
+def figure(
+    nrows: int = 1,
+    ncols: int = 1,
+    size=(9.0, 4.2),
+    sharey: bool = False,
+    sharex: bool = False,
+):
     """A figure on the chart surface, with recessive axes and no chart junk.
 
     Built as a bare Figure rather than through pyplot, and laid out by the
@@ -58,7 +64,7 @@ def figure(nrows: int = 1, ncols: int = 1, size=(9.0, 4.2), sharey: bool = False
     avoids pyplot's global figure registry, which scripts leak.
     """
     fig = Figure(figsize=size, facecolor=SURFACE, layout="constrained")
-    axes = fig.subplots(nrows, ncols, sharey=sharey)
+    axes = fig.subplots(nrows, ncols, sharey=sharey, sharex=sharex)
     for ax in np.atleast_1d(np.asarray(axes)).ravel():
         ax.set_facecolor(SURFACE)
         for side in ("top", "right"):

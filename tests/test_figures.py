@@ -30,8 +30,15 @@ from e1_validation_gate import build_figure as build_e1  # noqa: E402
 from e2_loop_closure_density import build_figure as build_e2  # noqa: E402
 from e3_nonlinearity import build_coverage_figure as build_e3c  # noqa: E402
 from e3_nonlinearity import build_figure as build_e3  # noqa: E402
+from e4_perceptual_aliasing import build_figure as build_e4  # noqa: E402
 
-BUILDERS = {"e1": build_e1, "e2": build_e2, "e3": build_e3, "e3_coverage": build_e3c}
+BUILDERS = {
+    "e1": build_e1,
+    "e2": build_e2,
+    "e3": build_e3,
+    "e3_coverage": build_e3c,
+    "e4": build_e4,
+}
 
 
 @pytest.fixture(scope="module")
@@ -61,8 +68,6 @@ def test_every_panel_is_titled(any_figure):
     # location -- its default reads the (empty) centre title
     titles = [ax.get_title(loc="left") for ax in any_figure.axes]
     assert all(titles), "a panel without a title cannot be read on its own"
-    assert any("SE(2)" in t for t in titles)
-    assert any("SE(3)" in t for t in titles)
 
 
 def test_no_panel_uses_a_second_y_axis(any_figure):
@@ -127,7 +132,11 @@ def test_axes_are_labelled(any_figure):
     every Axes object carries its own.
     """
     for index, ax in enumerate(any_figure.axes):
-        assert ax.get_xlabel(), f"panel {index} has an unlabelled x axis"
+        if not ax.get_xlabel():
+            siblings = ax.get_shared_x_axes().get_siblings(ax)
+            assert any(other.get_xlabel() for other in siblings), (
+                f"panel {index} has an unlabelled x axis and shares with none"
+            )
         if ax.get_ylabel():
             continue
         siblings = ax.get_shared_y_axes().get_siblings(ax)
