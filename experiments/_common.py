@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -117,7 +118,14 @@ def save_figure(fig, name: str) -> Path:
     FIGURES_DIR.mkdir(exist_ok=True)
     path = FIGURES_DIR / f"{name}.svg"
     _svg_canvas()(fig)
-    fig.savefig(path, facecolor=SURFACE)  # the only step needing a renderer
+
+    # Deterministic output. By default matplotlib stamps the SVG with the
+    # current time and names its internal elements from a random salt, so
+    # regenerating an unchanged figure rewrites most of the file and shows up
+    # as a large diff that has to be read to discover it says nothing. Figures
+    # are committed here, so that noise would be permanent.
+    matplotlib.rcParams["svg.hashsalt"] = name
+    fig.savefig(path, facecolor=SURFACE, metadata={"Date": None})
     return path
 
 
