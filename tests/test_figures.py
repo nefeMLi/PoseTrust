@@ -118,9 +118,20 @@ def test_observed_series_uses_the_documented_palette_hue(e1_figure):
 
 
 def test_axes_are_labelled(any_figure):
-    for ax in any_figure.axes:
-        assert ax.get_xlabel(), "unlabelled x axis"
-        assert ax.get_ylabel(), "unlabelled y axis"
+    """Every axis is labelled, or shares one with a labelled sibling.
+
+    A shared y-axis is labelled once for the row rather than repeated on each
+    panel, so the requirement is that the reader can find the label, not that
+    every Axes object carries its own.
+    """
+    for index, ax in enumerate(any_figure.axes):
+        assert ax.get_xlabel(), f"panel {index} has an unlabelled x axis"
+        if ax.get_ylabel():
+            continue
+        siblings = ax.get_shared_y_axes().get_siblings(ax)
+        assert any(other.get_ylabel() for other in siblings), (
+            f"panel {index} has an unlabelled y axis and shares with none"
+        )
 
 
 def test_grid_is_recessive_and_behind_the_data(any_figure):
