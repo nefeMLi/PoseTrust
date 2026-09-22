@@ -202,15 +202,23 @@ def figures() -> bool:
     rendered says nothing about whether the covariance is correct, so a
     missing plotting backend must not be able to fail the science.
     """
+    fig = build_figure()
+    try:
+        path = save_figure(fig, "e1_validation_gate")
+    except ImportError as exc:
+        print(f"figure built but not written -- no usable renderer here ({exc})")
+        print("results are in results/; rerun with --figures-only to write it.")
+        return False
+    print(f"figure written to {path}")
+    return True
+
+
+def build_figure():
+    """Assemble the E1 figure. No rendering, so this runs anywhere."""
     summaries = read_results("e1_nees")
     samples = read_results("e1_nees_samples")
 
-    try:
-        fig, axes = figure(nrows=2, ncols=2, size=(10.0, 7.0))
-    except ImportError as exc:
-        print(f"figures skipped -- no usable matplotlib backend here ({exc})")
-        print("results are in results/; rerun with --figures-only to plot them.")
-        return False
+    fig, axes = figure(nrows=2, ncols=2, size=(10.0, 7.0))
     for row_index, (name, _) in enumerate(GROUPS):
         summary = next(
             s
@@ -287,10 +295,7 @@ def figures() -> bool:
         x=0.02,
         ha="left",
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
-    path = save_figure(fig, "e1_validation_gate")
-    print(f"figure written to {path}")
-    return True
+    return fig
 
 
 def main() -> int:
