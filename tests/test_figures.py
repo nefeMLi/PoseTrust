@@ -28,8 +28,10 @@ pytest.importorskip("matplotlib.figure")
 from _common import BAND, INK_MUTED, OBSERVED, SURFACE  # noqa: E402
 from e1_validation_gate import build_figure as build_e1  # noqa: E402
 from e2_loop_closure_density import build_figure as build_e2  # noqa: E402
+from e3_nonlinearity import build_coverage_figure as build_e3c  # noqa: E402
+from e3_nonlinearity import build_figure as build_e3  # noqa: E402
 
-BUILDERS = {"e1": build_e1, "e2": build_e2}
+BUILDERS = {"e1": build_e1, "e2": build_e2, "e3": build_e3, "e3_coverage": build_e3c}
 
 
 @pytest.fixture(scope="module")
