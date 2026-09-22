@@ -25,13 +25,27 @@ sys.path.insert(0, str(EXPERIMENTS))
 pytest.importorskip("matplotlib.figure")
 
 from _common import BAND, INK_MUTED, OBSERVED, SURFACE  # noqa: E402
-from e1_validation_gate import build_figure  # noqa: E402
+from e1_validation_gate import build_figure as build_e1  # noqa: E402
+from e2_loop_closure_density import build_figure as build_e2  # noqa: E402
+
+BUILDERS = {"e1": build_e1, "e2": build_e2}
 
 
 @pytest.fixture(scope="module")
 def e1_figure():
     """The real E1 figure, built from the committed parquet results."""
-    return build_figure()
+    return build_e1()
+
+
+@pytest.fixture(params=sorted(BUILDERS), scope="module")
+def any_figure(request):
+    """Every experiment figure, for the checks that apply to all of them."""
+    return BUILDERS[request.param]()
+
+
+def legend_of(ax, fig):
+    """A panel's legend, whether it sits on the axes or on the figure."""
+    return ax.get_legend() or (fig.legends[0] if fig.legends else None)
 
 
 def test_figure_has_one_panel_per_group_and_view(e1_figure):
@@ -39,22 +53,22 @@ def test_figure_has_one_panel_per_group_and_view(e1_figure):
     assert len(e1_figure.axes) == 4
 
 
-def test_every_panel_is_titled(e1_figure):
+def test_every_panel_is_titled(any_figure):
     # titles are set left-aligned, so get_title() must be asked for that
     # location -- its default reads the (empty) centre title
-    titles = [ax.get_title(loc="left") for ax in e1_figure.axes]
+    titles = [ax.get_title(loc="left") for ax in any_figure.axes]
     assert all(titles), "a panel without a title cannot be read on its own"
     assert any("SE(2)" in t for t in titles)
     assert any("SE(3)" in t for t in titles)
 
 
-def test_no_panel_uses_a_second_y_axis(e1_figure):
+def test_no_panel_uses_a_second_y_axis(any_figure):
     """The dual-axis anti-pattern, asserted against rather than trusted.
 
     Two y-scales on one frame let a reader infer any relationship the author
     wants. Two measures of different scale belong in two panels.
     """
-    for ax in e1_figure.axes:
+    for ax in any_figure.axes:
         siblings = ax.get_shared_x_axes().get_siblings(ax)
         overlapping = [
             other
@@ -86,11 +100,11 @@ def test_coverage_panels_plot_observed_against_the_identity_line(e1_figure):
         assert len(observed.get_xdata()) == 4, "four nominal levels"
 
 
-def test_identity_is_never_encoded_by_colour_alone(e1_figure):
+def test_identity_is_never_encoded_by_colour_alone(any_figure):
     """Every panel carries a legend, so a colourblind reader is not stranded."""
-    for ax in e1_figure.axes:
-        legend = ax.get_legend()
-        assert legend is not None, "a two-series panel needs a legend"
+    for ax in any_figure.axes:
+        legend = legend_of(ax, any_figure)
+        assert legend is not None, "a multi-series panel needs a legend"
         assert len(legend.get_texts()) >= 2
 
 
@@ -102,14 +116,14 @@ def test_observed_series_uses_the_documented_palette_hue(e1_figure):
     assert {SURFACE, INK_MUTED, BAND} == {"#fcfcfb", "#52514e", "#d9d8d4"}
 
 
-def test_axes_are_labelled(e1_figure):
-    for ax in e1_figure.axes:
+def test_axes_are_labelled(any_figure):
+    for ax in any_figure.axes:
         assert ax.get_xlabel(), "unlabelled x axis"
         assert ax.get_ylabel(), "unlabelled y axis"
 
 
-def test_grid_is_recessive_and_behind_the_data(e1_figure):
-    for ax in e1_figure.axes:
+def test_grid_is_recessive_and_behind_the_data(any_figure):
+    for ax in any_figure.axes:
         assert ax.get_axisbelow() is True
         assert not ax.spines["top"].get_visible()
         assert not ax.spines["right"].get_visible()
@@ -163,11 +177,11 @@ def overlap_area(a, b) -> float:
     return (min(a.x1, b.x1) - max(a.x0, b.x0)) * (min(a.y1, b.y1) - max(a.y0, b.y0))
 
 
-def test_no_drawn_text_escapes_the_canvas(e1_figure):
-    renderer, width, height = laid_out(e1_figure)
+def test_no_drawn_text_escapes_the_canvas(any_figure):
+    renderer, width, height = laid_out(any_figure)
     escaped = [
         text.get_text()
-        for text in drawn_texts(e1_figure)
+        for text in drawn_texts(any_figure)
         if (lambda b: b.x0 < -1 or b.y0 < -1 or b.x1 > width + 1 or b.y1 > height + 1)(
             text.get_window_extent(renderer)
         )
@@ -175,16 +189,16 @@ def test_no_drawn_text_escapes_the_canvas(e1_figure):
     assert not escaped, f"text clipped by the canvas edge: {escaped}"
 
 
-def test_no_drawn_labels_collide(e1_figure):
+def test_no_drawn_labels_collide(any_figure):
     """The automated half of "render it and look at it".
 
     A test cannot judge whether a chart reads well, but it can catch the
     failure that most often makes one unreadable: labels printed on top of
     each other once the data changes shape.
     """
-    renderer, _, _ = laid_out(e1_figure)
+    renderer, _, _ = laid_out(any_figure)
     boxes = [
-        (t.get_text(), t.get_window_extent(renderer)) for t in drawn_texts(e1_figure)
+        (t.get_text(), t.get_window_extent(renderer)) for t in drawn_texts(any_figure)
     ]
     collisions = [
         (a[0], b[0])
@@ -195,9 +209,9 @@ def test_no_drawn_labels_collide(e1_figure):
     assert not collisions, f"overlapping labels: {collisions}"
 
 
-def test_panels_do_not_overlap_each_other(e1_figure):
-    renderer, _, _ = laid_out(e1_figure)
-    boxes = [ax.get_window_extent(renderer) for ax in e1_figure.axes]
+def test_panels_do_not_overlap_each_other(any_figure):
+    renderer, _, _ = laid_out(any_figure)
+    boxes = [ax.get_window_extent(renderer) for ax in any_figure.axes]
     clashes = [
         (i, j)
         for i in range(len(boxes))
@@ -207,13 +221,13 @@ def test_panels_do_not_overlap_each_other(e1_figure):
     assert not clashes, f"panels overlap: {clashes}"
 
 
-def test_no_mark_is_drawn_without_a_legend_entry(e1_figure):
+def test_no_mark_is_drawn_without_a_legend_entry(any_figure):
     """An unexplained line on a chart is chart junk.
 
     The reference line marking the expected mean was drawn unlabelled at
     first: visible, meaningful, and impossible for a reader to identify.
     """
-    for index, ax in enumerate(e1_figure.axes):
+    for index, ax in enumerate(any_figure.axes):
         anonymous = [
             line.get_label()
             for line in ax.lines
@@ -243,16 +257,17 @@ def ink_under(ax, box, renderer) -> float:
     return total
 
 
-def test_no_annotation_is_laid_over_the_data(e1_figure):
+def test_no_annotation_is_laid_over_the_data(any_figure):
     """Legends and labels must not sit on top of the marks they describe.
 
     This is the check that was missing when the label-collision test passed a
     figure whose legend covered 1400 px^2 of histogram: comparing text against
     text says nothing about text against data.
     """
-    renderer, _, _ = laid_out(e1_figure)
-    for index, ax in enumerate(e1_figure.axes):
-        boxes = [ax.get_legend().get_window_extent(renderer)]
+    renderer, _, _ = laid_out(any_figure)
+    for index, ax in enumerate(any_figure.axes):
+        legend = legend_of(ax, any_figure)
+        boxes = [legend.get_window_extent(renderer)] if ax.get_legend() else []
         boxes += [t.get_window_extent(renderer) for t in ax.texts]
         for box in boxes:
             covered = ink_under(ax, box, renderer)
@@ -281,10 +296,10 @@ def test_legend_placement_is_consistent_within_a_chart_type(e1_figure):
     assert abs(coverages[0] - coverages[1]) < 0.05
 
 
-def test_panel_titles_fit_inside_their_panel(e1_figure):
+def test_panel_titles_fit_inside_their_panel(any_figure):
     """Titles now carry the headline number, so they can overflow."""
-    renderer, _, _ = laid_out(e1_figure)
-    for index, ax in enumerate(e1_figure.axes):
+    renderer, _, _ = laid_out(any_figure)
+    for index, ax in enumerate(any_figure.axes):
         title = ax._left_title
         if not title.get_text():
             continue
