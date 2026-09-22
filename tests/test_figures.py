@@ -363,3 +363,20 @@ def test_sweep_conditions_are_evenly_spaced():
         gaps = np.diff(ticks)
         assert np.allclose(gaps, gaps[0]), "sweep conditions are not evenly placed"
 
+
+def test_saved_figures_are_byte_identical_when_regenerated(tmp_path, monkeypatch):
+    """Regenerating an unchanged figure must not produce a diff.
+
+    matplotlib stamps SVGs with the current time and names internal elements
+    from a random salt, so an unchanged figure rewrote most of its own file.
+    Figures are committed here, so that noise would be permanent and every
+    review would have to read a few hundred changed lines to find out they
+    say nothing.
+    """
+    import _common
+
+    monkeypatch.setattr(_common, "FIGURES_DIR", tmp_path)
+    first = _common.save_figure(BUILDERS["e2"](), "determinism").read_bytes()
+    second = _common.save_figure(BUILDERS["e2"](), "determinism").read_bytes()
+    assert first == second, "figure output is not reproducible"
+
