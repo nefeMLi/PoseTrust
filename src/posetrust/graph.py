@@ -107,9 +107,9 @@ class PoseGraph:
         the perceptual-aliasing experiment asks, so the weighting has to reach
         H rather than being applied only to the residuals.
 
-        Dense for now. Week 2 swaps this for sparse Cholesky with a
-        fill-reducing ordering; the interface does not change, and the dense
-        version stays as the reference the sparse one is checked against.
+        H is assembled dense. At the graph sizes this study uses each solve
+        is milliseconds, so the sparsity has never been worth exploiting; if
+        that changes, the interface does not.
         """
         n = len(self.poses) * self.dof
         H = np.zeros((n, n))
