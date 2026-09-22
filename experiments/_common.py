@@ -13,13 +13,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.figure import Figure
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
@@ -50,8 +47,17 @@ def read_results(name: str):
 
 
 def figure(nrows: int = 1, ncols: int = 1, size=(9.0, 4.2)):
-    """A figure on the chart surface, with recessive axes and no chart junk."""
-    fig, axes = plt.subplots(nrows, ncols, figsize=size, facecolor=SURFACE)
+    """A figure on the chart surface, with recessive axes and no chart junk.
+
+    Built as a bare Figure rather than through pyplot, and laid out by the
+    constrained engine rather than an explicit tight_layout call. Both choices
+    keep figure *construction* free of any rendering backend, so the plotting
+    logic can be exercised by the test suite on a machine that cannot
+    rasterise -- only save_figure() below needs a working renderer. It also
+    avoids pyplot's global figure registry, which scripts leak.
+    """
+    fig = Figure(figsize=size, facecolor=SURFACE, layout="constrained")
+    axes = fig.subplots(nrows, ncols)
     for ax in np.atleast_1d(np.asarray(axes)).ravel():
         ax.set_facecolor(SURFACE)
         for side in ("top", "right"):
@@ -69,8 +75,7 @@ def save_figure(fig, name: str) -> Path:
     """Write figures/<name>.png."""
     FIGURES_DIR.mkdir(exist_ok=True)
     path = FIGURES_DIR / f"{name}.png"
-    fig.savefig(path, dpi=160, facecolor=SURFACE, bbox_inches="tight")
-    plt.close(fig)
+    fig.savefig(path, dpi=160, facecolor=SURFACE)  # the only step needing a renderer
     return path
 
 
