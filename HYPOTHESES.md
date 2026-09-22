@@ -94,6 +94,29 @@ artefact of how the match is defined. If no fair matching can be constructed,
 this hypothesis will be withdrawn rather than answered badly, and the
 withdrawal recorded here.
 
+> **WITHDRAWN 2026-09-22, before E3 was run.** No fair matching exists, and
+> every candidate decides the answer in advance:
+>
+> - *Same per-axis sigma.* SE(3)'s rotation-error magnitude is then larger by
+>   root three, so it meets more non-linearity by construction rather than by
+>   anything intrinsic to the group.
+> - *Same total rotation-error magnitude.* Fairer on that axis, but SE(3)
+>   still carries three noisy degrees of freedom SE(2) does not have. It is a
+>   different estimation problem, not the same one in a bigger group.
+> - *Same trajectory.* A trajectory that only turns about z makes SE(3)
+>   literally the SE(2) subgroup — already verified as an exact identity in
+>   the tests — so the comparison is degenerate. Tilting the axis to exercise
+>   SE(3) means the two groups no longer share a trajectory.
+>
+> Withdrawn rather than answered badly, as this section committed to.
+>
+> Replaced, **as an exploratory question and not a prediction**, by one that
+> is well posed: at what rotation-error magnitude does each group lose
+> calibration? That is a per-group threshold in radians, so it compares where
+> each breaks rather than their values at an arbitrarily matched sigma, and it
+> needs no cross-dimensional matching. Any result from it is exploratory and
+> must be labelled so.
+
 ### H4 — Robust back-ends and calibration (Q3, experiment E4)
 
 **Prediction.** Robust back-ends restore trajectory accuracy under perceptual
