@@ -425,3 +425,30 @@ def test_rejected_conditions_are_not_plotted_as_measurements():
             f"figure draws {plotted} series for {usable} usable conditions"
         )
 
+
+def test_lines_break_rather_than_bridge_excluded_conditions():
+    """A line joined across a rejected condition claims data that is not there.
+
+    Plain least squares fails to converge at three of E4's outlier rates. Drawn
+    as a continuous line it looked tracked across the whole sweep, with
+    straight segments spanning the rates where it had produced no answer at
+    all. Those gaps are now NaN, so the line breaks.
+    """
+    from _common import read_results
+
+    rows = read_results("e4_aliasing")
+    dropped = {
+        r["rate"] for r in rows if r["method"] == "plain least squares" and not r["usable"]
+    }
+    assert dropped, "fixture no longer exercises this"
+
+    figure = BUILDERS["e4"]()
+    for ax in figure.axes:
+        for line in ax.lines:
+            if line.get_label() != "plain least squares":
+                continue
+            y = np.asarray(line.get_ydata(), dtype=float)
+            assert np.isnan(y).sum() == len(dropped), (
+                "baseline line does not break at the rates it failed to converge"
+            )
+
