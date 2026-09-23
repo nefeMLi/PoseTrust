@@ -285,47 +285,44 @@ def build_figure():
 
     colours = dict(zip([m[0] for m in METHODS if not m[2]], METHOD_COLOURS))
 
+    rates = np.array(sorted({r["rate"] for r in rows}))
     for method_name, _, is_baseline in METHODS:
-        series = sorted(
-            (r for r in rows if r["method"] == method_name and r["usable"]),
-            key=lambda r: r["rate"],
-        )
-        if not series:
+        by_rate = {
+            r["rate"]: r
+            for r in rows
+            if r["method"] == method_name and r["usable"]
+        }
+        if not by_rate:
             continue
-        rate = np.array([r["rate"] for r in series])
+        # NaN at every rate this method has no usable result for, so the line
+        # breaks there. Joining across an excluded condition would draw a
+        # segment through values that were never measured -- plain least
+        # squares fails to converge at three rates, and a continuous line
+        # would claim it was tracked across all of them.
+        errors = np.array([by_rate[x]["rms_error"] if x in by_rate else np.nan for x in rates])
+        ratios = np.array([by_rate[x]["ratio"] if x in by_rate else np.nan for x in rates])
         style = (
             BASELINE_STYLE
             if is_baseline
             else {"color": colours[method_name], "linestyle": "-"}
         )
 
-        top.plot(
-            rate,
-            [r["rms_error"] for r in series],
-            marker="o",
-            markersize=6,
-            linewidth=2.0,
-            label=method_name,
-            **style,
-        )
-        bottom.plot(
-            rate,
-            [r["ratio"] for r in series],
-            marker="o",
-            markersize=6,
-            linewidth=2.0,
-            label=method_name,
-            **style,
-        )
+        for axis, values in ((top, errors), (bottom, ratios)):
+            axis.plot(
+                rates,
+                values,
+                marker="o",
+                markersize=6,
+                linewidth=2.0,
+                label=method_name,
+                **style,
+            )
 
-    clean = [r for r in rows if r["usable"]]
-    bottom.axhspan(
-        clean[0]["band_low"],
-        clean[0]["band_high"],
-        color="#d9d8d4",
-        alpha=0.9,
-        linewidth=0,
-        label="chi-squared acceptance band",
+    # A reference line rather than the acceptance band. The band is three
+    # percent wide and this axis spans two and a half decades, so it renders
+    # as a sliver on top of the line and adds nothing a reader can use.
+    bottom.axhline(
+        1.0, color=INK_MUTED, linewidth=2.0, linestyle=":", label="calibrated"
     )
     bottom.set_yscale("log")
 
