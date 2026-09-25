@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from conftest import build_graph, short_trajectory, perturbed
+from conftest import build_graph, perturbed, short_trajectory
 
+from posetrust.optimize import optimizer
 from posetrust.optimize.gauge import free_mask
 from posetrust.optimize.optimizer import gauss_newton, levenberg_marquardt, solve_step
 
@@ -173,11 +174,12 @@ def test_levenberg_marquardt_is_not_worse_than_gauss_newton(lie) -> None:
     assert lm.chi2 <= gn.chi2 + 1e-6 * max(1.0, abs(gn.chi2))
 
 
-def test_levenberg_marquardt_gives_up_when_damping_is_exhausted(lie) -> None:
+def test_levenberg_marquardt_gives_up_when_damping_is_exhausted(lie, monkeypatch) -> None:
     """The failure path must exit, not spin to max_iterations.
 
-    Reached here by setting tol=0 so the step-norm test can never fire,
-    leaving the damping ceiling as the only way out. That branch is how a
+    Reached here by switching off both convergence tests -- tol=0 for the
+    step norm, and a negative resolution for the Newton decrement -- leaving
+    the damping ceiling as the only way out. That branch is how a
     genuinely stuck solve reports itself, and the Monte Carlo harness refuses
     to compute a verdict over runs that did not converge -- so it has to be
     reported honestly rather than silently returning the last iterate.
@@ -186,9 +188,45 @@ def test_levenberg_marquardt_gives_up_when_damping_is_exhausted(lie) -> None:
     graph = build_graph(lie, truth, noise=0.02, seed=21)
     optimum = gauss_newton(graph, perturbed(lie, truth, sigma=0.1), anchor=0)
 
+    monkeypatch.setattr(optimizer, "_CHI2_RESOLUTION", -1.0)
     stuck = levenberg_marquardt(graph, optimum.poses, anchor=0, tol=0.0)
     assert not stuck.converged
     assert stuck.iterations < 100, "should exit on damping, not exhaust iterations"
     # giving up must not corrupt the estimate it already had
     assert stuck.chi2 == pytest.approx(optimum.chi2, rel=1e-9)
 
+
+
+def test_levenberg_marquardt_does_not_crawl_in_curved_valleys() -> None:
+    """Large rotational noise makes a narrow curved valley, E3's hard case.
+
+    Dividing the damping by ten on success and multiplying by ten on failure
+    alternated accept and reject there for thousands of iterations. At the
+    default budget of a hundred, over half of these runs were then reported
+    as non-converged and dropped from E3 -- the most non-linear runs of the
+    sweep, discarded for being slow rather than wrong.
+    """
+    from posetrust.lie import se3
+    from posetrust.simulate import NoiseModel, make_scenario, sample_graph
+
+    sigma = np.array([0.02, 0.02, 0.02, 0.3, 0.3, 0.3])
+    scenario = make_scenario(se3, n_poses=10, loop_density=0.3, seed=200, turn=0.25)
+    seeds = np.random.SeedSequence(201).spawn(20)
+    for child in seeds:
+        graph = sample_graph(se3, scenario, NoiseModel(sigma), np.random.default_rng(child))
+        result = levenberg_marquardt(graph, list(scenario.truth), anchor=0)
+        assert result.converged, f"stopped after {result.iterations} iterations"
+
+
+def test_levenberg_marquardt_convergence_means_stationary(lie) -> None:
+    """Reported convergence must be a genuine optimum, not a large damping
+    shrinking the step below tol: the Newton decrement left at the returned
+    estimate is negligible on the chi-squared scale."""
+    truth = short_trajectory(lie)
+    graph = build_graph(lie, truth, noise=0.15, seed=31)
+    result = levenberg_marquardt(graph, perturbed(lie, truth, sigma=0.8), anchor=0)
+    assert result.converged
+    H, b = graph.linearize(result.poses)
+    free = free_mask(len(truth), lie.DOF, 0)
+    newton = solve_step(H, b, free)
+    assert -float(b[free] @ newton[free]) < 1e-12 * max(1.0, result.chi2)

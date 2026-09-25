@@ -76,7 +76,7 @@ def test_chain_marginals_match_closed_form(lie) -> None:
     Laplace covariance is not being recovered even where it is provably exact,
     and every calibration result downstream would be measuring our own bug.
     """
-    graph, H, omega = identity_chain(lie)
+    _, H, omega = identity_chain(lie)
     marginals = marginal_covariances(H, anchor=0, dof=lie.DOF)
     omega_inv = np.linalg.inv(omega)
     for k, block in enumerate(marginals):
@@ -159,7 +159,7 @@ def test_cross_covariance_is_not_ignored(lie) -> None:
     difference. Dropping the cross-covariance block is a standard way to
     report a relative covariance that is far too large.
     """
-    graph, H, omega = identity_chain(lie)
+    graph, H, _ = identity_chain(lie)
     dof = lie.DOF
     blocks = marginal_covariances(H, 0, dof)
     rel = relative_covariance(lie, H, graph.poses, 2, 6, anchor=0)

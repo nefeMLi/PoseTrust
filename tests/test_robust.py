@@ -52,8 +52,14 @@ def test_weight_is_the_derivative_of_cost(kernel):
 
 
 @pytest.mark.parametrize("kernel", KERNELS, ids=KERNEL_IDS)
-def test_perfect_measurements_are_not_down_weighted(kernel):
-    """w(0) == 1: robustness must cost nothing when nothing is wrong."""
+def test_zero_residual_has_full_weight(kernel):
+    """w(0) == 1: every kernel agrees with least squares at the origin.
+
+    That is all it shows. A real inlier's residual is not zero, and at
+    typical chi-squared residuals the redescending kernels do down-weight
+    good constraints -- which inflates the covariance they report. E4 has to
+    be read with that in mind; this test does not rule it out.
+    """
     assert kernel.weight(np.array([0.0]))[0] == pytest.approx(1.0)
 
 
@@ -103,7 +109,7 @@ def test_loop_closure_indices_exclude_odometry(lie):
 
 def test_trivial_kernel_reproduces_plain_least_squares(outlier_free_graph):
     """IRLS with a flat weight must land exactly where Gauss-Newton does."""
-    graph, truth, start = outlier_free_graph
+    graph, _, start = outlier_free_graph
     plain = gauss_newton(graph, start, anchor=0)
     reweighted = irls(graph, start, Trivial(), anchor=0)
     for a, b in zip(plain.poses, reweighted.poses):
@@ -118,7 +124,7 @@ def test_weights_reach_the_information_matrix(outlier_free_graph):
     from the reweighted information, so if weighting never reached H there
     would be nothing to interrogate.
     """
-    graph, truth, start = outlier_free_graph
+    graph, truth, _ = outlier_free_graph
     weights = np.full(len(graph.factors), 0.25)
     H_plain, _ = graph.linearize(truth)
     H_weighted, _ = graph.linearize(truth, weights=weights)
@@ -134,7 +140,7 @@ def test_robust_cost_leaves_unmasked_factors_quadratic(outlier_free_graph):
 
 def test_masked_factors_keep_unit_weight(outlier_free_graph):
     """Odometry must not be down-weighted when only closures are robustified."""
-    graph, truth, _ = outlier_free_graph
+    graph, _, _ = outlier_free_graph
     s = np.full(len(graph.factors), 1e6)
     mask = np.zeros(len(graph.factors), dtype=bool)
     mask[loop_closure_indices(graph)] = True
@@ -145,16 +151,15 @@ def test_masked_factors_keep_unit_weight(outlier_free_graph):
 
 def outlier_scenario(lie, rate=0.3, seed=4):
     """A graph with planted false loop closures, started from dead reckoning."""
-    from posetrust.simulate import (NoiseModel, dead_reckon, make_scenario,
-                                    sample_graph)
+    from posetrust.simulate import NoiseModel, dead_reckon, make_scenario, sample_graph
 
     scenario = make_scenario(
-        lie, n_poses=12, loop_density=0.8, outlier_rate=rate, seed=seed, turn=0.25
+        lie, n_poses=10, loop_density=1.0, outlier_rate=rate, seed=seed, turn=0.25
     )
     graph = sample_graph(
         lie, scenario, NoiseModel(np.full(lie.DOF, 0.05)), np.random.default_rng(7)
     )
-    start = dead_reckon(lie, graph, 12)
+    start = dead_reckon(lie, graph, 10)
     start[0] = scenario.truth[0]
     return scenario, graph, start
 
@@ -248,14 +253,14 @@ def test_huber_restores_accuracy_without_restoring_calibration():
     from posetrust.stats import CONSISTENT, ConsistencyReport
 
     scenario = make_scenario(
-        se2, n_poses=10, loop_density=0.8, outlier_rate=0.2, seed=4, turn=0.25
+        se2, n_poses=10, loop_density=1.0, outlier_rate=0.2, seed=4, turn=0.25
     )
     noise = NoiseModel(np.full(3, 0.05))
     threshold = chi2_threshold(3, 0.95)
     delta = np.sqrt(threshold)
 
     def run(kernel):
-        solver = lambda g, p, anchor=0: irls(  # noqa: E731
+        solver = lambda g, p, anchor=0: irls(
             g, p, kernel, anchor=anchor, robust_factors=loop_closure_indices(g)
         )
         result = monte_carlo(se2, scenario, noise, n_runs=40, seed=3, solver=solver)
@@ -275,3 +280,37 @@ def test_huber_restores_accuracy_without_restoring_calibration():
     # the redescending kernel restores both
     assert cauchy_report.verdict == CONSISTENT
 
+
+
+def test_slow_reweighting_is_not_recorded_as_failure(lie):
+    """Huber against six false closures in twenty settles, but slowly.
+
+    IRLS converges linearly, and here it needs about two hundred iterations.
+    A budget of fifty once reported every such run as non-converged, so E4
+    dropped them and called the condition a convergence failure: a property
+    of the budget, reported as one of the kernel.
+    """
+    from posetrust.simulate import NoiseModel, dead_reckon, make_scenario, sample_graph
+
+    scenario = make_scenario(
+        lie, n_poses=20, loop_density=1.0, outlier_rate=0.3, seed=300, turn=0.25
+    )
+    graph = sample_graph(
+        lie, scenario, NoiseModel(np.full(lie.DOF, 0.05)), np.random.default_rng(0)
+    )
+    start = dead_reckon(lie, graph, 20)
+    start[0] = scenario.truth[0]
+    delta = np.sqrt(chi2_threshold(lie.DOF, 0.95))
+    closures = loop_closure_indices(graph)
+
+    result = irls(graph, start, Huber(delta), robust_factors=closures)
+    assert result.converged
+    assert result.iterations > 50, "no longer a slow case; the test lost its point"
+    # and the stationary point is a genuine one, not a tolerance artefact
+    s = squared_residuals(graph, result.poses)
+    mask = np.zeros(len(graph.factors), dtype=bool)
+    mask[closures] = True
+    _, b = graph.linearize(result.poses, weights=factor_weights(Huber(delta), s, mask))
+    free = np.ones(len(b), dtype=bool)
+    free[: lie.DOF] = False
+    assert np.linalg.norm(b[free]) < 1e-8

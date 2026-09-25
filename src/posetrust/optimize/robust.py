@@ -187,7 +187,7 @@ def irls(
     kernel=None,
     anchor: int = 0,
     robust_factors: np.ndarray | None = None,
-    max_iterations: int = 50,
+    max_iterations: int = 500,
     tol: float = 1e-12,
 ) -> Result:
     """Iteratively reweighted least squares with a fixed kernel.
@@ -200,6 +200,13 @@ def irls(
     `chi2` on the result is the robust objective, not the least-squares one;
     the two are not comparable across kernels, which is why E4 compares
     trajectory error and NEES instead.
+
+    The iteration budget is large on purpose. Reweighting converges linearly,
+    not quadratically like Gauss-Newton: with several false closures a convex
+    kernel can shrink the step by only ten percent an iteration and need a few
+    hundred to settle. A tight budget would record those runs as failures,
+    and the analysis would then drop them -- an artefact of the budget
+    reported as a property of the kernel.
     """
     kernel = kernel or Trivial()
     poses = [np.array(T, dtype=float) for T in (poses or graph.poses)]
@@ -233,8 +240,8 @@ def graduated_non_convexity(
     anchor: int = 0,
     robust_factors: np.ndarray | None = None,
     mu_factor: float = 1.4,
-    max_outer: int = 60,
     inner_iterations: int = 3,
+    max_iterations: int = 500,
     tol: float = 1e-12,
 ) -> Result:
     """Anneal from a near-convex surrogate down to Geman-McClure.
@@ -248,7 +255,10 @@ def graduated_non_convexity(
 
     mu starts at 2*max(s)/c^2, large enough that the surrogate is convex over
     the residuals actually present, and is divided by `mu_factor` until it
-    reaches 1, where the surrogate is Geman-McClure proper.
+    reaches 1, taking `inner_iterations` reweighted steps at each level. At
+    mu = 1 the surrogate is Geman-McClure proper, and the final solve is
+    plain IRLS on it, so convergence is judged by the same rule and budget as
+    every other robust back-end.
     """
     poses = [np.array(T, dtype=float) for T in (poses or graph.poses)]
     free = free_mask(len(poses), graph.dof, anchor)
@@ -256,28 +266,32 @@ def graduated_non_convexity(
 
     s = squared_residuals(graph, poses)
     mu = max(1.0, 2.0 * float(s.max()) / c**2)
-    converged = False
-    iterations = 0
+    annealing = 0
 
-    for _ in range(max_outer):
+    while mu > 1.0:
         kernel = GemanMcClure(c, mu)
         for _ in range(inner_iterations):
-            iterations += 1
+            annealing += 1
             s = squared_residuals(graph, poses)
             weights = factor_weights(kernel, s, mask)
             H, b = graph.linearize(poses, weights=weights)
-            delta = solve_step(H, b, free)
-            poses = graph.retract(poses, delta)
-
-        if mu <= 1.0 and np.linalg.norm(delta) < tol:
-            converged = True
-            break
+            poses = graph.retract(poses, solve_step(H, b, free))
         mu = max(1.0, mu / mu_factor)
 
-    final = GemanMcClure(c, 1.0)
-    s = squared_residuals(graph, poses)
-    weights = factor_weights(final, s, mask)
-    H, _ = graph.linearize(poses, weights=weights)
+    final = irls(
+        graph,
+        poses,
+        GemanMcClure(c, 1.0),
+        anchor=anchor,
+        robust_factors=robust_factors,
+        max_iterations=max_iterations,
+        tol=tol,
+    )
     return Result(
-        poses, robust_cost(final, s, mask), iterations, converged, H, anchor
+        final.poses,
+        final.chi2,
+        annealing + final.iterations,
+        final.converged,
+        final.information,
+        anchor,
     )

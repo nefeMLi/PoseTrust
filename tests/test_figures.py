@@ -23,14 +23,12 @@ import pytest
 EXPERIMENTS = Path(__file__).resolve().parent.parent / "experiments"
 sys.path.insert(0, str(EXPERIMENTS))
 
-pytest.importorskip("matplotlib.figure")
-
-from _common import BAND, INK_MUTED, OBSERVED, SURFACE  # noqa: E402
-from e1_validation_gate import build_figure as build_e1  # noqa: E402
-from e2_loop_closure_density import build_figure as build_e2  # noqa: E402
-from e3_nonlinearity import build_coverage_figure as build_e3c  # noqa: E402
-from e3_nonlinearity import build_figure as build_e3  # noqa: E402
-from e4_perceptual_aliasing import build_figure as build_e4  # noqa: E402
+from _common import BAND, INK_MUTED, OBSERVED, SURFACE
+from e1_validation_gate import build_figure as build_e1
+from e2_loop_closure_density import build_figure as build_e2
+from e3_nonlinearity import build_coverage_figure as build_e3c
+from e3_nonlinearity import build_figure as build_e3
+from e4_perceptual_aliasing import build_figure as build_e4
 
 BUILDERS = {
     "e1": build_e1,
@@ -202,12 +200,14 @@ def overlap_area(a, b) -> float:
 
 def test_no_drawn_text_escapes_the_canvas(any_figure):
     renderer, width, height = laid_out(any_figure)
+
+    def escapes(box) -> bool:
+        return box.x0 < -1 or box.y0 < -1 or box.x1 > width + 1 or box.y1 > height + 1
+
     escaped = [
         text.get_text()
         for text in drawn_texts(any_figure)
-        if (lambda b: b.x0 < -1 or b.y0 < -1 or b.x1 > width + 1 or b.y1 > height + 1)(
-            text.get_window_extent(renderer)
-        )
+        if escapes(text.get_window_extent(renderer))
     ]
     assert not escaped, f"text clipped by the canvas edge: {escaped}"
 
@@ -392,7 +392,26 @@ def test_saved_figures_are_byte_identical_when_regenerated(tmp_path, monkeypatch
     assert first == second, "figure output is not reproducible"
 
 
-def test_rejected_conditions_are_not_plotted_as_measurements():
+def _with_rejected(monkeypatch, module_name: str, name: str, pick) -> list[dict]:
+    """The committed results for `name`, with the rows `pick` selects marked
+    as convergence failures, served to the figure module in their place.
+
+    Whether a real sweep happens to contain a rejected condition is a fact
+    about the data, and changes when the data does; the figure's handling of
+    one has to be tested regardless.
+    """
+    from _common import read_results
+
+    rows = read_results(name)
+    for row in rows:
+        if pick(row):
+            row.update(usable=False, verdict="convergence failure", converged=0)
+    assert any(not r["usable"] for r in rows), "the selector matched nothing"
+    monkeypatch.setattr(sys.modules[module_name], "read_results", lambda _: rows)
+    return rows
+
+
+def test_rejected_conditions_are_not_plotted_as_measurements(monkeypatch):
     """A condition the analysis threw out must not appear as a datum.
 
     E3 rejects any condition converging on under half its runs, and the first
@@ -400,11 +419,10 @@ def test_rejected_conditions_are_not_plotted_as_measurements():
     A reader had no way to know one of the eight markers was a result the
     study had already declined to report.
     """
-    from _common import read_results
-
-    rows = read_results("e3_nonlinearity")
-    rejected = [r for r in rows if not r["usable"]]
-    assert rejected, "fixture no longer exercises this; pick another sweep"
+    rows = _with_rejected(
+        monkeypatch, "e3_nonlinearity", "e3_nonlinearity",
+        lambda r: r["group"] == "SE(3)" and r["rotation_sigma"] == 0.45,
+    )
 
     for builder in (BUILDERS["e3"], BUILDERS["e3_coverage"]):
         figure = builder()
@@ -426,29 +444,30 @@ def test_rejected_conditions_are_not_plotted_as_measurements():
         )
 
 
-def test_lines_break_rather_than_bridge_excluded_conditions():
+def test_lines_break_rather_than_bridge_excluded_conditions(monkeypatch):
     """A line joined across a rejected condition claims data that is not there.
 
-    Plain least squares fails to converge at three of E4's outlier rates. Drawn
-    as a continuous line it looked tracked across the whole sweep, with
-    straight segments spanning the rates where it had produced no answer at
-    all. Those gaps are now NaN, so the line breaks.
+    Drawn as a continuous line, a method that produced no usable result at
+    some rates looked tracked across the whole sweep, with straight segments
+    spanning the gaps. Those gaps are NaN, so the line breaks.
     """
-    from _common import read_results
-
-    rows = read_results("e4_aliasing")
+    rows = _with_rejected(
+        monkeypatch, "e4_perceptual_aliasing", "e4_aliasing",
+        lambda r: r["method"] == "plain least squares" and r["rate"] in (0.1, 0.2),
+    )
     dropped = {
         r["rate"] for r in rows if r["method"] == "plain least squares" and not r["usable"]
     }
-    assert dropped, "fixture no longer exercises this"
 
     figure = BUILDERS["e4"]()
+    checked = 0
     for ax in figure.axes:
         for line in ax.lines:
             if line.get_label() != "plain least squares":
                 continue
+            checked += 1
             y = np.asarray(line.get_ydata(), dtype=float)
             assert np.isnan(y).sum() == len(dropped), (
                 "baseline line does not break at the rates it failed to converge"
             )
-
+    assert checked == 2, "expected the baseline in both panels"
