@@ -1,40 +1,4 @@
-"""E4 (Q3, the prize): false loop closures at rates 0-30%. Compare plain
-least squares, Huber, Cauchy, switchable constraints, and graduated
-non-convexity on trajectory error and NEES (F3).
-
-The interesting quadrant is low trajectory error with bad NEES: a back-end
-that looks like it worked and reports an uncertainty that is wrong anyway.
-Any evaluation scoring only accuracy would call that a success, and a system
-that then sized a safety margin from the covariance would be relying on a
-number nothing had checked.
-
-H4 as refined in HYPOTHESES.md, still open: whether calibration is restored
-depends on whether the kernel redescends. A convex kernel never drives an
-outlier's weight to zero, so the surviving weight keeps inflating H even as
-the majority of good constraints pull the trajectory back. Redescending
-kernels zero it and recover both. The gap should widen with the outlier rate.
-The preview that motivated this saw it at a single rate; sweeping is what
-turns that into a result or kills it.
-
-Initialisation is dead reckoning, not ground truth. That is pre-registered:
-everywhere else the question is whether the covariance at the optimum is
-honest, and starting at the truth keeps convergence from confounding it. Here
-convergence is part of the question -- a back-end that cannot find the optimum
-from a realistic starting point has not solved the problem.
-
-Every rate uses the same graph, the same noise seed, and nested false
-closures: each rate is the one below it with more closures corrupted, the
-earlier ones unchanged. With twenty closures the rates 0-30% are exactly 0-6
-false closures, so each point on the axis is a distinct condition. All five
-methods see identical draws at every rate.
-
-One deviation from the original figure plan, which asked for trajectory error
-and NEES on twin axes. Two y-scales on one frame let a reader infer whichever
-relationship the author wants, and the comparison here is exactly the kind
-that invites it. The two measures get a panel each over a shared x instead.
-
-Run:  python experiments/e4_perceptual_aliasing.py [--runs N] [--figures-only]
-"""
+"""E4: robust back-ends under false loop closures."""
 
 from __future__ import annotations
 
@@ -82,9 +46,7 @@ SEED = 300
 THRESHOLD = chi2_threshold(LIE.DOF, 0.95)
 DELTA = float(np.sqrt(THRESHOLD))
 
-# Categorical slots in the reference palette's fixed order. The baseline is
-# not one of the methods under test, so it wears neutral ink and a dashed
-# stroke: it is the thing they are being compared against.
+# Fixed palette order; the baseline is neutral and dashed.
 BASELINE_STYLE = {"color": INK_MUTED, "linestyle": "--"}
 METHOD_COLOURS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
 
@@ -119,7 +81,7 @@ REDESCENDING = {"Cauchy", "switchable", "GNC"}
 
 
 def condition(method_name: str, solver, rate: float, n_runs: int) -> dict:
-    """One method at one outlier rate: trajectory error and calibration."""
+    """Run one method at one outlier rate."""
     scenario = make_scenario(
         LIE,
         n_poses=N_POSES,
@@ -137,9 +99,7 @@ def condition(method_name: str, solver, rate: float, n_runs: int) -> dict:
         solver=solver,
         initialize="odometry",
     )
-    # Trajectory error, in the same tangent-space units the covariance uses,
-    # over the free poses: the anchor is held at the truth and would only
-    # dilute the average with zeros. The interval resamples runs.
+    # RMS error over the free poses (the anchor is exact), with a bootstrap interval.
     free = [k for k in range(N_POSES) if k != result.anchor]
     per_run = np.mean(result.errors[result.converged][:, free] ** 2, axis=(1, 2))
     if per_run.size >= 2:
@@ -159,16 +119,13 @@ def condition(method_name: str, solver, rate: float, n_runs: int) -> dict:
 
 
 def _condition_by_index(method: int, rate: float, n_runs: int) -> dict:
-    """condition() addressed by position, so a worker process can look the
-    solver up itself: the kernel closures in METHODS cannot be pickled."""
+    """condition() by method index, since the solvers can't be pickled."""
     name, solver, _ = METHODS[method]
     return condition(name, solver, rate, n_runs)
 
 
 def run(n_runs: int) -> None:
-    # The slowest sweep in the study, and its conditions are independent and
-    # each seeded on its own, so they run in parallel with results identical
-    # to a serial run.
+    # Conditions are seeded independently, so parallel runs give the same results.
     tasks = [(m, rate) for m in range(len(METHODS)) for rate in OUTLIER_RATES]
     with ProcessPoolExecutor() as pool:
         futures = [pool.submit(_condition_by_index, m, rate, n_runs) for m, rate in tasks]
@@ -188,9 +145,7 @@ def run(n_runs: int) -> None:
 
 
 def _miscalibrated(row, direction: int) -> bool:
-    """Miscalibrated as HYPOTHESES.md defines it: in `direction` (+1 for
-    overconfident, -1 for conservative), surviving multiplicity correction,
-    in a usable condition."""
+    """Significant after FDR, in the given direction (+1 over, -1 under)."""
     return (
         row["usable"]
         and row["significant_after_fdr"]
@@ -218,12 +173,8 @@ def report_console(rows) -> None:
     survivorship_warning(rows, lambda r: f"{r['method']} rate {r['rate']}")
 
     print("\n  The dangerous quadrant: accuracy recovered, covariance still wrong.")
-    # "Recovered" means below twice the method's own error with no outliers
-    # -- a threshold chosen after the first runs, and recorded as such in
-    # HYPOTHESES.md. It is judged against the method's own uncorrupted run, not
-    # against plain least squares at the same rate: under aliasing the
-    # baseline can fail to converge, and its trajectory error then is not a
-    # number anything should be compared against.
+    # Recovered = below twice the method's own clean error. The threshold was
+    # chosen after the first runs (see HYPOTHESES.md).
     for method_name, _, is_baseline in METHODS:
         if is_baseline:
             continue
@@ -247,11 +198,7 @@ def report_console(rows) -> None:
             f"overconfident at {over}, conservative at {under}"
         )
 
-    # A kernel that down-weights correct measurements reports the covariance
-    # of a weaker system than it was given. That shows up as a conservative
-    # reading with no outliers present at all, and it means a "calibrated"
-    # reading under aliasing may be partly that inflation offsetting the
-    # outliers rather than the outliers having been removed.
+    # Conservative with no outliers means good constraints are being down-weighted.
     inflated = [
         r["method"] for r in rows if r["rate"] == 0.0 and _miscalibrated(r, -1)
     ]
@@ -292,28 +239,15 @@ def report_console(rows) -> None:
 
 
 def build_figure():
-    """F3: outlier rate against trajectory error and calibration.
-
-    Two panels over a shared x rather than twin y-axes. The whole point is
-    that the two measures disagree, and a dual-axis chart would let their
-    relative scaling be chosen rather than read.
-
-    The calibration panel leaves plain least squares out and says so. Its
-    ratios run to several hundred, and an axis stretched to hold them flattens
-    the robust methods -- which differ by a few percent, and in both
-    directions -- into one indistinguishable line. Its trajectory error, the
-    part of its failure that fits on a common scale, stays in the top panel.
-    """
+    """Trajectory error and calibration against the outlier rate."""
     rows = read_results("e4_aliasing")
-    # Stacked over a common x, so the axis is shared: ticks line up and the
-    # label is written once for the column rather than twice.
+    # Stacked panels over a shared x.
     fig, axes = figure(nrows=2, ncols=1, size=(8.2, 7.4), sharex=True)
     top, bottom = axes
 
     colours = dict(zip([m[0] for m in METHODS if not m[2]], METHOD_COLOURS))
     rates = np.array(sorted({r["rate"] for r in rows}))
-    # Methods sit side by side within each rate, so their intervals do not
-    # hide one another where the values coincide.
+    # Offset the methods slightly so their intervals don't hide each other.
     step = rates[1] - rates[0]
     offsets = (np.arange(len(METHODS)) - (len(METHODS) - 1) / 2) * step * 0.09
 
@@ -326,10 +260,7 @@ def build_figure():
         if not by_rate:
             continue
 
-        # NaN at every rate this method has no usable result for, so the line
-        # breaks there. Joining across an excluded condition would draw a
-        # segment through values that were never measured, and claim a method
-        # was tracked across rates where it produced no answer at all.
+        # NaN at rejected conditions, so the line breaks instead of bridging them.
         def column(key, table=by_rate):
             return np.array([table[x][key] if x in table else np.nan for x in rates])
 
@@ -370,8 +301,7 @@ def build_figure():
     bottom.axhline(
         1.0, color=INK_MUTED, linewidth=2.0, linestyle=":", label="calibrated"
     )
-    # Log, so that "twice too confident" and "twice too cautious" sit the same
-    # distance from calibrated.
+    # Log scale, so over- and under-confidence look symmetric.
     bottom.set_yscale("log")
     ticks = [0.9, 1.0, 1.5, 2.0, 3.0]
     bottom.set_yticks(ticks, [f"{t:g}" for t in ticks])
@@ -432,7 +362,7 @@ def figures() -> bool:
     try:
         print(f"figure written to {save_figure(build_figure(), 'e4_perceptual_aliasing')}")
     except ImportError as exc:
-        print(f"figure built but not written -- no usable renderer ({exc})")
+        print(f"figure built but not written: no usable renderer ({exc})")
         return False
     return True
 
