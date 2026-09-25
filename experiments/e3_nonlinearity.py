@@ -19,6 +19,10 @@ translational part and non-linear only through rotation, so rotation is the
 only axis along which the Laplace approximation can degrade. Translation
 noise is held fixed throughout to keep that attribution clean.
 
+Every noise level uses the same graph and the same seed, so run r at one
+level is run r at the next with its rotational draws scaled up. The sweep
+varies the noise and nothing else.
+
 Run:  python experiments/e3_nonlinearity.py [--runs N] [--figures-only]
 """
 
@@ -26,23 +30,28 @@ from __future__ import annotations
 
 import argparse
 import sys
+from itertools import pairwise
 
 import numpy as np
 from _common import (
     INK,
     INK_MUTED,
     OBSERVED,
+    SURVIVORSHIP_FRACTION,
+    calibration,
     figure,
     label,
+    mark_fdr,
     read_results,
     save_figure,
+    survivorship_warning,
     write_results,
 )
 
 from posetrust.lie import se2, se3
 from posetrust.optimize.optimizer import levenberg_marquardt
 from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
-from posetrust.stats import ConsistencyReport, benjamini_hochberg, nees_by_dof
+from posetrust.stats import ConsistencyReport, nees_by_dof
 
 GROUPS = [("SE(2)", se2), ("SE(3)", se3)]
 ROTATION_NOISE = [0.01, 0.03, 0.06, 0.10, 0.15, 0.22, 0.30, 0.45]
@@ -51,8 +60,7 @@ TRANSLATION_NOISE = 0.02
 N_POSES = 10
 LOOP_DENSITY = 0.3
 TURN = 0.25
-ALPHA = 0.05
-MIN_CONVERGED_FRACTION = 0.5
+SEED = 200
 
 # Ordinal ramp from the reference palette's sequential blue, starting at the
 # step that still clears 2:1 against the light surface. Noise level is a
@@ -60,13 +68,13 @@ MIN_CONVERGED_FRACTION = 0.5
 NOISE_RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]
 
 
-def condition(lie, rotation_sigma: float, n_runs: int, seed: int) -> dict:
+def condition(lie, rotation_sigma: float, n_runs: int) -> dict:
     """One rotational noise level: NEES, coverage, and the per-DOF split."""
     sigma = np.full(lie.DOF, TRANSLATION_NOISE)
     sigma[lie.TRANSLATION_DOF :] = rotation_sigma
 
     scenario = make_scenario(
-        lie, n_poses=N_POSES, loop_density=LOOP_DENSITY, seed=seed, turn=TURN
+        lie, n_poses=N_POSES, loop_density=LOOP_DENSITY, seed=SEED, turn=TURN
     )
     # Levenberg-Marquardt rather than plain Gauss-Newton. Both find the same
     # optimum where both converge, so this does not change what is measured;
@@ -80,20 +88,11 @@ def condition(lie, rotation_sigma: float, n_runs: int, seed: int) -> dict:
         scenario,
         NoiseModel(sigma),
         n_runs=n_runs,
-        seed=seed + 1,
+        seed=SEED + 1,
         solver=levenberg_marquardt,
     )
     converged = result.converged
-    fraction = float(converged.mean())
-    usable = fraction >= MIN_CONVERGED_FRACTION
-
-    values = result.nees_full[converged]
-    report = ConsistencyReport(values, result.free_dof, ALPHA)
-    low, high = report.acceptance
-
-    rng = np.random.default_rng(seed)
-    boot = rng.choice(values, size=(2000, values.size), replace=True).mean(axis=1)
-    ci_low, ci_high = np.percentile(boot, [2.5, 97.5]) / report.dof
+    summary = calibration(result)
 
     # Realised rotational error magnitude, in radians. This is the common unit
     # the two groups can be compared in, since it measures how far the
@@ -113,23 +112,11 @@ def condition(lie, rotation_sigma: float, n_runs: int, seed: int) -> dict:
     translation_dof = lie.TRANSLATION_DOF
     rotation_dof = lie.DOF - translation_dof
 
+    report = ConsistencyReport(result.nees_full[converged], result.free_dof)
     nominal, empirical = report.coverage(COVERAGE_LEVELS)
     return {
-        "group": None,
         "rotation_sigma": rotation_sigma,
-        "dof": report.dof,
-        "n_runs": int(n_runs),
-        "converged": int(converged.sum()),
-        "converged_fraction": fraction,
-        "usable": usable,
-        "mean_nees": report.mean,
-        "ratio": report.mean / report.dof,
-        "band_low": low / report.dof,
-        "band_high": high / report.dof,
-        "ci_low": float(ci_low),
-        "ci_high": float(ci_high),
-        "pvalue": report.pvalue,
-        "verdict": report.verdict if usable else "convergence failure",
+        **summary,
         "rms_rotation_error": rms_rotation,
         "translation_ratio": float(split["translation"].mean() / translation_dof),
         "rotation_ratio": float(split["rotation"].mean() / rotation_dof),
@@ -141,19 +128,12 @@ def condition(lie, rotation_sigma: float, n_runs: int, seed: int) -> dict:
 def run(n_runs: int) -> None:
     rows = []
     for name, lie in GROUPS:
-        for index, sigma in enumerate(ROTATION_NOISE):
-            row = condition(lie, sigma, n_runs, seed=200 + index)
-            row["group"] = name
+        for sigma in ROTATION_NOISE:
+            row = {"group": name, **condition(lie, sigma, n_runs)}
             rows.append(row)
             print(f"  {name} rot sigma {sigma:<5} -> {row['verdict']}")
 
-    usable = [r for r in rows if r["usable"]]
-    flagged = benjamini_hochberg(np.array([r["pvalue"] for r in usable]), ALPHA)
-    for row, reject in zip(usable, flagged):
-        row["significant_after_fdr"] = bool(reject)
-    for row in rows:
-        row.setdefault("significant_after_fdr", False)
-
+    mark_fdr(rows)
     write_results(rows, "e3_nonlinearity")
     report_console(rows)
 
@@ -177,20 +157,7 @@ def report_console(rows) -> None:
     print("\n  * survives Benjamini-Hochberg across the sweep")
     print("  trans / rot are the per-degree-of-freedom split, pooled and descriptive")
 
-    # Dropping non-converged runs is necessary but not neutral. The survivors
-    # are the draws whose noise happened to be benign, so a condition losing
-    # runs reads as better calibrated than it is -- which is why the ratio
-    # falls at the top of the sweep rather than the effect levelling off.
-    suspect = [r for r in rows if r["usable"] and r["converged_fraction"] < 0.9]
-    if suspect:
-        print("\n  Survivorship warning: these dropped more than 10% of runs, so")
-        print("  their ratios are biased towards calibration and are lower bounds:")
-        for row in suspect:
-            print(
-                f"    {row['group']} sd {row['rotation_sigma']}: "
-                f"{row['converged']}/{row['n_runs']} converged, "
-                f"ratio {row['ratio']:.1f}"
-            )
+    survivorship_warning(rows, lambda r: f"{r['group']} sd {r['rotation_sigma']}")
 
     print("\n  H2 predicted: overconfidence grows with rotational noise, abruptly.")
     for name, _ in GROUPS:
@@ -199,10 +166,13 @@ def report_console(rows) -> None:
             key=lambda r: r["rotation_sigma"],
         )
         ratios = [r["ratio"] for r in series]
-        rising = all(a <= b + 1e-9 for a, b in zip(ratios, ratios[1:]))
+        if len(ratios) < 2:
+            print(f"  {name}: too few usable conditions to judge")
+            continue
+        rising = all(a <= b + 1e-9 for a, b in pairwise(ratios))
         biggest = max(
             (b / a, series[i + 1]["rotation_sigma"])
-            for i, (a, b) in enumerate(zip(ratios, ratios[1:]))
+            for i, (a, b) in enumerate(pairwise(ratios))
         )
         print(
             f"  {name}: {ratios[0]:.2f} at sd {series[0]['rotation_sigma']}, "
@@ -258,7 +228,9 @@ def build_figure():
         # drawn as though they were. Those that converged but lost runs are
         # biased towards calibration, so they are drawn hollow: lower bounds.
         usable = np.array([r["usable"] for r in series])
-        complete = np.array([r["converged_fraction"] >= 0.9 for r in series])
+        complete = np.array(
+            [r["converged_fraction"] >= SURVIVORSHIP_FRACTION for r in series]
+        )
         for mask, fill, tag in (
             (usable & complete, OBSERVED, "observed, 95% interval"),
             (usable & ~complete, "none", "lower bound, runs dropped"),

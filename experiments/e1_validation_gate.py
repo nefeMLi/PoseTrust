@@ -103,7 +103,7 @@ def exactness(lie) -> dict:
 
 def consistency(lie, sigma: float, n_runs: int):
     """Monte Carlo NEES against the chi-squared band, near the linear regime."""
-    scenario = make_scenario(lie, n_poses=6, loop_density=0.3, seed=1, turn=0.05)
+    scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=1, turn=0.05)
     result = monte_carlo(
         lie, scenario, NoiseModel(np.full(lie.DOF, sigma)), n_runs=n_runs, seed=7
     )
