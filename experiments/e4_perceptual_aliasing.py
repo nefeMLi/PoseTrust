@@ -22,6 +22,12 @@ honest, and starting at the truth keeps convergence from confounding it. Here
 convergence is part of the question -- a back-end that cannot find the optimum
 from a realistic starting point has not solved the problem.
 
+Every rate uses the same graph, the same noise seed, and nested false
+closures: each rate is the one below it with more closures corrupted, the
+earlier ones unchanged. With twenty closures the rates 0-30% are exactly 0-6
+false closures, so each point on the axis is a distinct condition. All five
+methods see identical draws at every rate.
+
 One deviation from the original figure plan, which asked for trajectory error
 and NEES on twin axes. Two y-scales on one frame let a reader infer whichever
 relationship the author wants, and the comparison here is exactly the kind
@@ -34,15 +40,19 @@ from __future__ import annotations
 
 import argparse
 import sys
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 from _common import (
     INK,
     INK_MUTED,
+    calibration,
     figure,
     label,
+    mark_fdr,
     read_results,
     save_figure,
+    survivorship_warning,
     write_results,
 )
 
@@ -58,16 +68,14 @@ from posetrust.optimize.robust import (
     loop_closure_indices,
 )
 from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
-from posetrust.stats import ConsistencyReport, benjamini_hochberg
 
 LIE = se2
 OUTLIER_RATES = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
-N_POSES = 12
-LOOP_DENSITY = 0.8
+N_POSES = 20
+LOOP_DENSITY = 1.0
 NOISE = 0.05
 TURN = 0.25
-ALPHA = 0.05
-MIN_CONVERGED_FRACTION = 0.5
+SEED = 300
 
 THRESHOLD = chi2_threshold(LIE.DOF, 0.95)
 DELTA = float(np.sqrt(THRESHOLD))
@@ -108,14 +116,14 @@ METHODS = [
 REDESCENDING = {"Cauchy", "switchable", "GNC"}
 
 
-def condition(method_name: str, solver, rate: float, n_runs: int, seed: int) -> dict:
+def condition(method_name: str, solver, rate: float, n_runs: int) -> dict:
     """One method at one outlier rate: trajectory error and calibration."""
     scenario = make_scenario(
         LIE,
         n_poses=N_POSES,
         loop_density=LOOP_DENSITY,
         outlier_rate=rate,
-        seed=seed,
+        seed=SEED,
         turn=TURN,
     )
     result = monte_carlo(
@@ -123,62 +131,60 @@ def condition(method_name: str, solver, rate: float, n_runs: int, seed: int) -> 
         scenario,
         NoiseModel(np.full(LIE.DOF, NOISE)),
         n_runs=n_runs,
-        seed=seed + 1,
+        seed=SEED + 1,
         solver=solver,
         initialize="odometry",
     )
-    converged = result.converged
-    fraction = float(converged.mean())
-    usable = fraction >= MIN_CONVERGED_FRACTION
-
     # Trajectory error, in the same tangent-space units the covariance uses.
-    rms_error = float(np.sqrt(np.mean(result.errors[converged] ** 2)))
-
-    values = result.nees_full[converged]
-    report = ConsistencyReport(values, result.free_dof, ALPHA)
-    rng = np.random.default_rng(seed)
-    boot = rng.choice(values, size=(2000, values.size), replace=True).mean(axis=1)
-    ci_low, ci_high = np.percentile(boot, [2.5, 97.5]) / report.dof
-
+    converged = result.errors[result.converged]
+    rms_error = float(np.sqrt(np.mean(converged**2))) if converged.size else float("nan")
     return {
         "method": method_name,
         "rate": rate,
-        "dof": report.dof,
-        "n_runs": int(n_runs),
-        "converged": int(converged.sum()),
-        "converged_fraction": fraction,
-        "usable": usable,
+        "outliers": len(scenario.outliers),
         "rms_error": rms_error,
-        "ratio": report.mean / report.dof,
-        "ci_low": float(ci_low),
-        "ci_high": float(ci_high),
-        "band_low": report.acceptance[0] / report.dof,
-        "band_high": report.acceptance[1] / report.dof,
-        "pvalue": report.pvalue,
-        "verdict": report.verdict if usable else "convergence failure",
+        **calibration(result),
     }
 
 
+def _condition_by_index(method: int, rate: float, n_runs: int) -> dict:
+    """condition() addressed by position, so a worker process can look the
+    solver up itself: the kernel closures in METHODS cannot be pickled."""
+    name, solver, _ = METHODS[method]
+    return condition(name, solver, rate, n_runs)
+
+
 def run(n_runs: int) -> None:
-    rows = []
-    for method_name, solver, _ in METHODS:
-        for index, rate in enumerate(OUTLIER_RATES):
-            row = condition(method_name, solver, rate, n_runs, seed=300 + index)
+    # The slowest sweep in the study, and its conditions are independent and
+    # each seeded on its own, so they run in parallel with results identical
+    # to a serial run.
+    tasks = [(m, rate) for m in range(len(METHODS)) for rate in OUTLIER_RATES]
+    with ProcessPoolExecutor() as pool:
+        futures = [pool.submit(_condition_by_index, m, rate, n_runs) for m, rate in tasks]
+        rows = []
+        for future in futures:
+            row = future.result()
             rows.append(row)
             print(
-                f"  {method_name:<20} rate {rate:<5} -> "
-                f"rms {row['rms_error']:.3f}, {row['verdict']}"
+                f"  {row['method']:<20} rate {row['rate']:<5} -> "
+                f"rms {row['rms_error']:.3f}, {row['verdict']}",
+                flush=True,
             )
 
-    usable = [r for r in rows if r["usable"]]
-    flagged = benjamini_hochberg(np.array([r["pvalue"] for r in usable]), ALPHA)
-    for row, reject in zip(usable, flagged):
-        row["significant_after_fdr"] = bool(reject)
-    for row in rows:
-        row.setdefault("significant_after_fdr", False)
-
+    mark_fdr(rows)
     write_results(rows, "e4_aliasing")
     report_console(rows)
+
+
+def _miscalibrated(row, direction: int) -> bool:
+    """Miscalibrated as HYPOTHESES.md defines it: in `direction` (+1 for
+    overconfident, -1 for conservative), surviving multiplicity correction,
+    in a usable condition."""
+    return (
+        row["usable"]
+        and row["significant_after_fdr"]
+        and (row["ratio"] - 1.0) * direction > 0
+    )
 
 
 def report_console(rows) -> None:
@@ -198,22 +204,13 @@ def report_console(rows) -> None:
         )
     print("\n  * survives Benjamini-Hochberg across the sweep")
 
-    suspect = [r for r in rows if r["usable"] and r["converged_fraction"] < 0.9]
-    if suspect:
-        print("\n  Survivorship warning: these dropped more than 10% of runs, so")
-        print("  their ratios are biased towards calibration and are lower bounds:")
-        for row in suspect:
-            print(
-                f"    {row['method']} rate {row['rate']}: "
-                f"{row['converged']}/{row['n_runs']} converged, "
-                f"ratio {row['ratio']:.1f}"
-            )
+    survivorship_warning(rows, lambda r: f"{r['method']} rate {r['rate']}")
 
     print("\n  The dangerous quadrant: accuracy recovered, covariance still wrong.")
     # "Recovered" is judged against the method's own uncorrupted run, not
-    # against plain least squares at the same rate: the baseline fails to
-    # converge at half the corrupted rates, so its trajectory error there is
-    # not a number anything should be compared against.
+    # against plain least squares at the same rate: under aliasing the
+    # baseline can fail to converge, and its trajectory error then is not a
+    # number anything should be compared against.
     for method_name, _, is_baseline in METHODS:
         if is_baseline:
             continue
@@ -228,15 +225,27 @@ def report_console(rows) -> None:
         recovered = sum(
             1 for r in corrupted if r["rms_error"] < 2.0 * clean["rms_error"]
         )
-        miscalibrated = sum(
-            1 for r in corrupted if r["verdict"] == "OVERCONFIDENT"
-        )
+        over = sum(1 for r in corrupted if _miscalibrated(r, +1))
+        under = sum(1 for r in corrupted if _miscalibrated(r, -1))
         family = "redescending" if method_name in REDESCENDING else "convex"
         print(
             f"  {method_name:<20} ({family:<12}) recovered accuracy at "
-            f"{recovered}/{len(corrupted)} corrupted rates, "
-            f"overconfident at {miscalibrated}/{len(corrupted)}"
+            f"{recovered}/{len(corrupted)} corrupted rates; "
+            f"overconfident at {over}, conservative at {under}"
         )
+
+    # A kernel that down-weights correct measurements reports the covariance
+    # of a weaker system than it was given. That shows up as a conservative
+    # reading with no outliers present at all, and it means a "calibrated"
+    # reading under aliasing may be partly that inflation offsetting the
+    # outliers rather than the outliers having been removed.
+    inflated = [
+        r["method"] for r in rows if r["rate"] == 0.0 and _miscalibrated(r, -1)
+    ]
+    if inflated:
+        print(f"\n  Conservative with no outliers at all: {', '.join(inflated)}.")
+        print("  These kernels down-weight correct constraints, which inflates")
+        print("  the covariance they report.")
 
     failed = [
         r
@@ -257,16 +266,15 @@ def report_console(rows) -> None:
         ("convex", ["Huber"]),
         ("redescending", sorted(REDESCENDING)),
     ):
-        bad = [
-            r
-            for r in rows
-            if r["method"] in members and r["usable"] and r["rate"] > 0
-            and r["verdict"] == "OVERCONFIDENT"
-        ]
         total = [
             r for r in rows if r["method"] in members and r["usable"] and r["rate"] > 0
         ]
-        print(f"  {family:<13}: overconfident at {len(bad)}/{len(total)} conditions")
+        over = sum(1 for r in total if _miscalibrated(r, +1))
+        under = sum(1 for r in total if _miscalibrated(r, -1))
+        print(
+            f"  {family:<13}: of {len(total)} conditions, overconfident at {over}, "
+            f"conservative at {under}, consistent at {len(total) - over - under}"
+        )
     print()
 
 
@@ -296,9 +304,8 @@ def build_figure():
             continue
         # NaN at every rate this method has no usable result for, so the line
         # breaks there. Joining across an excluded condition would draw a
-        # segment through values that were never measured -- plain least
-        # squares fails to converge at three rates, and a continuous line
-        # would claim it was tracked across all of them.
+        # segment through values that were never measured, and claim a method
+        # was tracked across rates where it produced no answer at all.
         errors = np.array([by_rate[x]["rms_error"] if x in by_rate else np.nan for x in rates])
         ratios = np.array([by_rate[x]["ratio"] if x in by_rate else np.nan for x in rates])
         style = (

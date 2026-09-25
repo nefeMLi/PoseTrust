@@ -1,5 +1,6 @@
-"""Shared plumbing for the experiment scripts: where results go, how they are
-written, and the figure style they share.
+"""Shared plumbing for the experiment scripts: the analysis rules fixed in
+HYPOTHESES.md, where results go, how they are written, and the figure style
+they share.
 
 The split between a run stage and a figure stage is deliberate. Sweeps take
 minutes to hours; figures take seconds. Writing the raw per-condition results
@@ -19,9 +20,20 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from matplotlib.figure import Figure
 
+from posetrust.stats import ConsistencyReport, benjamini_hochberg
+
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
 FIGURES_DIR = ROOT / "figures"
+
+# Analysis decisions pre-registered in HYPOTHESES.md. Defined once here so
+# that no experiment can quietly apply a different rule from the others.
+ALPHA = 0.05
+MIN_CONVERGED_FRACTION = 0.5
+# Below this converged fraction a usable condition is flagged as a lower
+# bound: the runs that survive are the ones whose noise was benign.
+SURVIVORSHIP_FRACTION = 0.9
+BOOTSTRAP_RESAMPLES = 2000
 
 # Reference data-visualisation palette, used unchanged. Only one categorical
 # hue is ever in play here: the observed quantity. Everything a chart compares
@@ -32,6 +44,105 @@ INK = "#0b0b0b"
 INK_MUTED = "#52514e"
 OBSERVED = "#2a78d6"
 BAND = "#d9d8d4"
+
+
+def calibration(result) -> dict:
+    """The calibration fields every experiment reports for one condition.
+
+    Non-converged runs are excluded and counted, and a condition under the
+    minimum converged fraction is reported as a convergence failure rather
+    than as a calibration result.
+
+    Two intervals, for two different questions. The acceptance band says what
+    a calibrated solver is allowed to produce with this many runs; the
+    bootstrap interval says how well this sweep pinned down what it actually
+    produced. The bootstrap is seeded from the NEES values themselves, so
+    the same results always give the same interval.
+    """
+    converged = result.converged
+    fraction = float(converged.mean())
+    usable = fraction >= MIN_CONVERGED_FRACTION
+    counts = {
+        "n_runs": int(result.n_runs),
+        "converged": int(converged.sum()),
+        "converged_fraction": fraction,
+        "usable": usable,
+    }
+    values = result.nees_full[converged]
+    if values.size < 2:
+        # Too few survivors for any statistic. Only reachable by a condition
+        # that is already unusable, and recorded as such rather than raised:
+        # a solver that gives no answer is a result.
+        nan = float("nan")
+        return {
+            "dof": int(result.free_dof),
+            **counts,
+            **dict.fromkeys(
+                ("mean_nees", "ratio", "band_low", "band_high", "ci_low",
+                 "ci_high", "pvalue"),
+                nan,
+            ),
+            "verdict": "convergence failure",
+        }
+    report = ConsistencyReport(values, result.free_dof, ALPHA)
+    low, high = report.acceptance
+
+    rng = np.random.default_rng(np.frombuffer(values.tobytes(), dtype=np.uint32))
+    boot = rng.choice(
+        values, size=(BOOTSTRAP_RESAMPLES, values.size), replace=True
+    ).mean(axis=1)
+    ci_low, ci_high = np.percentile(boot, [2.5, 97.5]) / report.dof
+    return {
+        "dof": report.dof,
+        **counts,
+        "mean_nees": report.mean,
+        "ratio": report.mean / report.dof,
+        "band_low": low / report.dof,
+        "band_high": high / report.dof,
+        "ci_low": float(ci_low),
+        "ci_high": float(ci_high),
+        "pvalue": report.pvalue,
+        "verdict": report.verdict if usable else "convergence failure",
+    }
+
+
+def mark_fdr(rows: list[dict]) -> None:
+    """Benjamini-Hochberg across every usable condition of one experiment.
+
+    Every condition is a test, so at alpha = 0.05 roughly one clean condition
+    in twenty would be flagged by chance alone.
+    """
+    usable = [r for r in rows if r["usable"]]
+    flagged = benjamini_hochberg(np.array([r["pvalue"] for r in usable]), ALPHA)
+    for row, reject in zip(usable, flagged):
+        row["significant_after_fdr"] = bool(reject)
+    for row in rows:
+        row.setdefault("significant_after_fdr", False)
+
+
+def survivorship_warning(rows: list[dict], describe) -> None:
+    """Name the usable conditions that dropped enough runs to be lower bounds.
+
+    Dropping non-converged runs is necessary but not neutral: the survivors
+    are the draws whose noise happened to be benign, so a condition losing
+    runs reads as better calibrated than it is. `describe(row)` names the
+    condition in the experiment's own terms.
+    """
+    suspect = [
+        r for r in rows if r["usable"] and r["converged_fraction"] < SURVIVORSHIP_FRACTION
+    ]
+    if not suspect:
+        return
+    print(
+        f"\n  Survivorship warning: these dropped more than "
+        f"{1 - SURVIVORSHIP_FRACTION:.0%} of runs, so"
+    )
+    print("  their ratios are biased towards calibration and are lower bounds:")
+    for row in suspect:
+        print(
+            f"    {describe(row)}: {row['converged']}/{row['n_runs']} converged, "
+            f"ratio {row['ratio']:.1f}"
+        )
 
 
 def write_results(rows: list[dict], name: str) -> Path:

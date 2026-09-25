@@ -195,3 +195,48 @@ a direction, not a result.
 - A null result is reportable. "The reported covariance is well calibrated
   across the operating range" would be a useful finding and is not a failed
   project.
+
+---
+
+## Amendment, 2026-09-24: defects found after the first runs
+
+An audit after E2-E4 had been run once found defects in how the conditions
+were generated and how convergence was judged. None of them touches a
+prediction or an analysis rule above; all of them affected which numbers
+those rules were applied to. Every experiment was re-run after the fixes,
+and the earlier results are superseded rather than kept alongside.
+
+1. **Sweep labels did not match the conditions.** Rates and densities were
+   rounded to whole counts, silently. In E4, ten closures at 5% was zero
+   outliers, and 15%, 20% and 25% were all two. In E2, densities 0.05 and 0.1
+   on twelve poses were both one closure. Counts are now required to be
+   exact, and E2 and E4 use twenty poses so that every swept value is a
+   distinct, exact count.
+
+2. **Each condition drew a different graph.** Every level of every sweep
+   used its own seed, so neighbouring conditions differed in which closures
+   existed, and which were false, as well as in the swept quantity. Closures
+   and outliers are now nested prefixes of one fixed random ordering, false
+   endpoints are fixed per scenario rather than redrawn per run, and one seed
+   is held across each sweep, so conditions are paired run by run.
+
+3. **Slow convergence was recorded as failure.** Gauss-Newton had a budget of
+   50 iterations and Levenberg-Marquardt 100, with a damping rule (divide by
+   ten on success, multiply by ten on failure) that oscillates in curved
+   valleys. Under large rotational noise, or with false closures leaving
+   large residuals, convergence is linear and slower than those budgets
+   allowed. Every run then reported as non-converged converges when given
+   more iterations. Because non-converged runs are excluded (rule above),
+   E3 dropped its most non-linear runs, biasing high-noise ratios towards
+   calibration, and E4 reported plain least squares as failing to converge
+   when it converges to a wrong answer. Levenberg-Marquardt now uses
+   Nielsen's gain-ratio damping and a stopping rule on the Newton decrement;
+   budgets are sized as a safety net rather than a test.
+
+   Observation 2 above, the 27 non-converged runs pooled into 88.7, may be
+   the same artefact. It still shows why pooling is wrong; it does not show
+   that those runs had diverged.
+
+4. **Verdict counts ignored multiplicity.** E4's summary counted raw
+   `OVERCONFIDENT` verdicts. It now requires surviving Benjamini-Hochberg,
+   as the confirmation rule above already said.

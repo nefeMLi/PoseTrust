@@ -17,6 +17,12 @@ two-sided, Benjamini-Hochberg across the conditions of this sweep, at least
 under half its runs converged reported as a convergence failure rather than
 as a calibration result.
 
+Every density is drawn from the same seed, so the closures form a nested
+sequence -- each graph is the sparser one plus more closures -- and every
+condition sees the same odometry noise. The sweep then varies density and
+nothing else. At twenty poses every density on the axis is an exact number
+of closures (0, 1, 2, 4, 8, 16, 24).
+
 Run:  python experiments/e2_loop_closure_density.py [--runs N] [--figures-only]
 """
 
@@ -24,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from itertools import pairwise
 
 import numpy as np
 from _common import (
@@ -31,93 +38,52 @@ from _common import (
     INK,
     INK_MUTED,
     OBSERVED,
+    calibration,
     figure,
     label,
+    mark_fdr,
     read_results,
     save_figure,
+    survivorship_warning,
     write_results,
 )
 
 from posetrust.lie import se2, se3
 from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
-from posetrust.stats import ConsistencyReport, benjamini_hochberg
 
 GROUPS = [("SE(2)", se2), ("SE(3)", se3)]
 DENSITIES = [0.0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.2]
-N_POSES = 12
+N_POSES = 20
 NOISE = 0.03
 TURN = 0.25
-ALPHA = 0.05
-MIN_CONVERGED_FRACTION = 0.5
+SEED = 100
 
 
-def condition(lie, density: float, n_runs: int, seed: int) -> dict:
+def condition(lie, density: float, n_runs: int) -> dict:
     """One density: Monte Carlo, then NEES against the band."""
     scenario = make_scenario(
-        lie, n_poses=N_POSES, loop_density=density, seed=seed, turn=TURN
+        lie, n_poses=N_POSES, loop_density=density, seed=SEED, turn=TURN
     )
     result = monte_carlo(
         lie,
         scenario,
         NoiseModel(np.full(lie.DOF, NOISE)),
         n_runs=n_runs,
-        seed=seed + 1,
+        seed=SEED + 1,
     )
-    converged = result.converged
-    fraction = float(converged.mean())
-    usable = fraction >= MIN_CONVERGED_FRACTION
-
-    values = result.nees_full[converged]
-    report = ConsistencyReport(values, result.free_dof, ALPHA)
-    low, high = report.acceptance
-
-    # Interval on the estimate itself, distinct from the acceptance band:
-    # the band says what a calibrated solver is allowed to produce, this says
-    # how well this sweep pinned down what it actually produced.
-    rng = np.random.default_rng(seed)
-    boot = rng.choice(values, size=(2000, values.size), replace=True).mean(axis=1)
-    ci_low, ci_high = np.percentile(boot, [2.5, 97.5]) / report.dof
     closures = len(scenario.edges) - (N_POSES - 1)
-    return {
-        "group": None,
-        "density": density,
-        "closures": closures,
-        "dof": report.dof,
-        "n_runs": int(n_runs),
-        "converged": int(converged.sum()),
-        "converged_fraction": fraction,
-        "usable": usable,
-        "mean_nees": report.mean,
-        "ratio": report.mean / report.dof,
-        "band_low": low / report.dof,
-        "band_high": high / report.dof,
-        "ci_low": float(ci_low),
-        "ci_high": float(ci_high),
-        "pvalue": report.pvalue,
-        "verdict": report.verdict if usable else "convergence failure",
-    }
+    return {"density": density, "closures": closures, **calibration(result)}
 
 
 def run(n_runs: int) -> None:
     rows = []
     for name, lie in GROUPS:
-        for index, density in enumerate(DENSITIES):
-            row = condition(lie, density, n_runs, seed=100 + index)
-            row["group"] = name
+        for density in DENSITIES:
+            row = {"group": name, **condition(lie, density, n_runs)}
             rows.append(row)
             print(f"  {name} density {density:<5} -> {row['verdict']}")
 
-    # Multiplicity: every condition in the sweep is a test, so at alpha = 0.05
-    # roughly one clean condition in twenty would be flagged by chance alone.
-    usable = [r for r in rows if r["usable"]]
-    flagged = benjamini_hochberg(
-        np.array([r["pvalue"] for r in usable]), alpha=ALPHA
-    )
-    for row, reject in zip(usable, flagged):
-        row["significant_after_fdr"] = bool(reject)
-    for row in rows:
-        row.setdefault("significant_after_fdr", False)
-
+    mark_fdr(rows)
     write_results(rows, "e2_density")
     report_console(rows)
 
@@ -138,6 +104,7 @@ def report_console(rows) -> None:
             f"{band:>15} {row['pvalue']:9.2e}  {row['verdict']:<14} {mark}"
         )
     print("\n  * survives Benjamini-Hochberg across the sweep")
+    survivorship_warning(rows, lambda r: f"{r['group']} density {r['density']}")
 
     print("\n  H1 predicted: overconfidence grows as density falls, monotonically.")
     for name, _ in GROUPS:
@@ -147,7 +114,7 @@ def report_console(rows) -> None:
         if len(ratios) < 3:
             print(f"  {name}: too few usable conditions to judge")
             continue
-        falling = all(a >= b - 1e-9 for a, b in zip(ratios, ratios[1:]))
+        falling = all(a >= b - 1e-9 for a, b in pairwise(ratios))
         sparsest, densest = ratios[0], ratios[-1]
         print(
             f"  {name}: sparse end {sparsest:.3f}, dense end {densest:.3f}, "
@@ -155,8 +122,8 @@ def report_console(rows) -> None:
         )
 
     # A null is only worth anything next to a statement of what it could have
-    # detected. Here the intervals are as wide as the whole spread of the
-    # estimates, which is the honest reading of the apparent scatter.
+    # detected, so the interval widths are printed beside the spread they
+    # would have to resolve.
     widths = [r["ci_high"] - r["ci_low"] for r in rows if r["usable"]]
     spread = max(r["ratio"] for r in rows if r["usable"]) - min(
         r["ratio"] for r in rows if r["usable"]
@@ -168,7 +135,7 @@ def report_console(rows) -> None:
     )
     print(
         f"  Differences below roughly {max(widths) / 2:.1%} of the state dimension "
-        f"are not resolvable here, and nothing larger is present."
+        f"are not resolvable here."
     )
     print(f"  {covering} of {len(widths)} intervals cover perfect calibration.")
     print()
@@ -223,8 +190,8 @@ def build_figure():
         ax.set_xticks(x)
         ax.set_xticklabels([f"{r['density']:g}" for r in series])
         ax.set_xlim(-0.5, len(series) - 0.5)
-        # linear, not log: the whole sweep spans 0.97 to 1.04, and a log
-        # scale would compress the only thing this figure has to show
+        # linear, not log: the whole sweep stays within a few percent of 1,
+        # and a log scale would compress the only thing this figure shows
         label(
             ax,
             f"{name} - calibration against constraint density",
