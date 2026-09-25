@@ -372,7 +372,7 @@ def build_coverage_figure():
         labelcolor=INK_MUTED,
     )
     fig.suptitle(
-        "F2: credible regions cover less than they claim as rotation grows",
+        "E3: credible regions cover less than they claim as rotation grows",
         color=INK,
         fontsize=12,
         x=0.02,

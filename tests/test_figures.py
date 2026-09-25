@@ -345,16 +345,18 @@ def test_panel_titles_fit_inside_their_panel(any_figure):
         )
 
 
-def test_point_estimates_carry_intervals():
+@pytest.mark.parametrize("name", ["e2", "e3", "e4"])
+def test_point_estimates_carry_intervals(name):
     """HYPOTHESES.md: "Every point estimate gets an interval."
 
     A sweep plotted as bare markers invites the reader to see structure in
     what is sampling noise -- which is exactly what the first version of the
     E2 figure did, with a dramatic-looking zigzag entirely inside the band.
     The acceptance band is not a substitute: it says what a calibrated solver
-    is allowed to produce, not how precisely this sweep measured it.
+    is allowed to produce, not how precisely this sweep measured it. Checked
+    on every sweep figure: E4 once shipped as bare lines because only E2 was.
     """
-    figure = BUILDERS["e2"]()
+    figure = BUILDERS[name]()
     for index, ax in enumerate(figure.axes):
         bars = [c for c in ax.containers if hasattr(c, "has_yerr")]
         assert bars, f"panel {index} plots estimates with no interval"
@@ -462,12 +464,30 @@ def test_lines_break_rather_than_bridge_excluded_conditions(monkeypatch):
     figure = BUILDERS["e4"]()
     checked = 0
     for ax in figure.axes:
-        for line in ax.lines:
-            if line.get_label() != "plain least squares":
+        for container in ax.containers:
+            if container.get_label() != "plain least squares":
                 continue
             checked += 1
-            y = np.asarray(line.get_ydata(), dtype=float)
+            y = np.asarray(container[0].get_ydata(), dtype=float)
             assert np.isnan(y).sum() == len(dropped), (
                 "baseline line does not break at the rates it failed to converge"
             )
-    assert checked == 2, "expected the baseline in both panels"
+    assert checked, "the baseline is not drawn at all"
+
+
+def test_calibration_panel_separates_the_robust_methods():
+    """The robust back-ends differ by a few percent, in both directions.
+
+    With plain least squares on the same axis the scale ran to several
+    hundred and all four collapsed into one line, hiding the finding that
+    separates them: Cauchy and GNC read conservative, switchable does not.
+    """
+    figure = BUILDERS["e4"]()
+    calibration = figure.axes[1]
+    low, high = calibration.get_ylim()
+    assert high / low < 10, "calibration axis spans too much to resolve a few percent"
+    drawn = {c.get_label() for c in calibration.containers}
+    assert "plain least squares" not in drawn
+    assert any("not shown" in t.get_text() for t in calibration.texts), (
+        "leaving the baseline out must be said on the panel"
+    )

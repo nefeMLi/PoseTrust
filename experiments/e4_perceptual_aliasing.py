@@ -44,8 +44,10 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 from _common import (
+    BAND,
     INK,
     INK_MUTED,
+    bootstrap_interval,
     calibration,
     figure,
     label,
@@ -135,14 +137,23 @@ def condition(method_name: str, solver, rate: float, n_runs: int) -> dict:
         solver=solver,
         initialize="odometry",
     )
-    # Trajectory error, in the same tangent-space units the covariance uses.
-    converged = result.errors[result.converged]
-    rms_error = float(np.sqrt(np.mean(converged**2))) if converged.size else float("nan")
+    # Trajectory error, in the same tangent-space units the covariance uses,
+    # over the free poses: the anchor is held at the truth and would only
+    # dilute the average with zeros. The interval resamples runs.
+    free = [k for k in range(N_POSES) if k != result.anchor]
+    per_run = np.mean(result.errors[result.converged][:, free] ** 2, axis=(1, 2))
+    if per_run.size >= 2:
+        rms_error = float(np.sqrt(per_run.mean()))
+        rms_low, rms_high = np.sqrt(bootstrap_interval(per_run))
+    else:
+        rms_error = rms_low = rms_high = float("nan")
     return {
         "method": method_name,
         "rate": rate,
         "outliers": len(scenario.outliers),
         "rms_error": rms_error,
+        "rms_ci_low": float(rms_low),
+        "rms_ci_high": float(rms_high),
         **calibration(result),
     }
 
@@ -207,7 +218,9 @@ def report_console(rows) -> None:
     survivorship_warning(rows, lambda r: f"{r['method']} rate {r['rate']}")
 
     print("\n  The dangerous quadrant: accuracy recovered, covariance still wrong.")
-    # "Recovered" is judged against the method's own uncorrupted run, not
+    # "Recovered" means below twice the method's own error with no outliers
+    # -- a threshold chosen after the first runs, and recorded as such in
+    # HYPOTHESES.md. It is judged against the method's own uncorrupted run, not
     # against plain least squares at the same rate: under aliasing the
     # baseline can fail to converge, and its trajectory error then is not a
     # number anything should be compared against.
@@ -284,17 +297,27 @@ def build_figure():
     Two panels over a shared x rather than twin y-axes. The whole point is
     that the two measures disagree, and a dual-axis chart would let their
     relative scaling be chosen rather than read.
+
+    The calibration panel leaves plain least squares out and says so. Its
+    ratios run to several hundred, and an axis stretched to hold them flattens
+    the robust methods -- which differ by a few percent, and in both
+    directions -- into one indistinguishable line. Its trajectory error, the
+    part of its failure that fits on a common scale, stays in the top panel.
     """
     rows = read_results("e4_aliasing")
     # Stacked over a common x, so the axis is shared: ticks line up and the
     # label is written once for the column rather than twice.
-    fig, axes = figure(nrows=2, ncols=1, size=(8.2, 7.0), sharex=True)
+    fig, axes = figure(nrows=2, ncols=1, size=(8.2, 7.4), sharex=True)
     top, bottom = axes
 
     colours = dict(zip([m[0] for m in METHODS if not m[2]], METHOD_COLOURS))
-
     rates = np.array(sorted({r["rate"] for r in rows}))
-    for method_name, _, is_baseline in METHODS:
+    # Methods sit side by side within each rate, so their intervals do not
+    # hide one another where the values coincide.
+    step = rates[1] - rates[0]
+    offsets = (np.arange(len(METHODS)) - (len(METHODS) - 1) / 2) * step * 0.09
+
+    for index, (method_name, _, is_baseline) in enumerate(METHODS):
         by_rate = {
             r["rate"]: r
             for r in rows
@@ -302,49 +325,95 @@ def build_figure():
         }
         if not by_rate:
             continue
+
         # NaN at every rate this method has no usable result for, so the line
         # breaks there. Joining across an excluded condition would draw a
         # segment through values that were never measured, and claim a method
         # was tracked across rates where it produced no answer at all.
-        errors = np.array([by_rate[x]["rms_error"] if x in by_rate else np.nan for x in rates])
-        ratios = np.array([by_rate[x]["ratio"] if x in by_rate else np.nan for x in rates])
+        def column(key, table=by_rate):
+            return np.array([table[x][key] if x in table else np.nan for x in rates])
+
         style = (
             BASELINE_STYLE
             if is_baseline
             else {"color": colours[method_name], "linestyle": "-"}
         )
-
-        for axis, values in ((top, errors), (bottom, ratios)):
-            axis.plot(
-                rates,
-                values,
+        panels = [(top, "rms_error", "rms_ci_low", "rms_ci_high")]
+        if not is_baseline:
+            panels.append((bottom, "ratio", "ci_low", "ci_high"))
+        for axis, key, low, high in panels:
+            value = column(key)
+            axis.errorbar(
+                rates + offsets[index],
+                value,
+                yerr=[value - column(low), column(high) - value],
                 marker="o",
                 markersize=6,
                 linewidth=2.0,
+                elinewidth=1.5,
+                capsize=3,
+                ecolor=style["color"],
                 label=method_name,
                 **style,
             )
 
-    # A reference line rather than the acceptance band. The band is three
-    # percent wide and this axis spans two and a half decades, so it renders
-    # as a sliver on top of the line and adds nothing a reader can use.
+    robust = [r for r in rows if r["method"] != METHODS[0][0] and r["usable"]]
+    bottom.axhspan(
+        robust[0]["band_low"],
+        robust[0]["band_high"],
+        color=BAND,
+        alpha=0.9,
+        linewidth=0,
+        label="chi-squared acceptance band",
+        zorder=0,
+    )
     bottom.axhline(
         1.0, color=INK_MUTED, linewidth=2.0, linestyle=":", label="calibrated"
     )
+    # Log, so that "twice too confident" and "twice too cautious" sit the same
+    # distance from calibrated.
     bottom.set_yscale("log")
+    ticks = [0.9, 1.0, 1.5, 2.0, 3.0]
+    bottom.set_yticks(ticks, [f"{t:g}" for t in ticks])
+    bottom.minorticks_off()
 
+    baseline = [
+        r["ratio"] for r in rows if r["method"] == METHODS[0][0] and r["rate"] > 0
+        and r["usable"]
+    ]
+    if baseline:
+        bottom.text(
+            0.02,
+            0.97,
+            f"{METHODS[0][0]} not shown: {min(baseline):.0f} to "
+            f"{max(baseline):.0f} at every corrupted rate",
+            transform=bottom.transAxes,
+            ha="left",
+            va="top",
+            fontsize=8.5,
+            color=INK_MUTED,
+        )
+
+    top.set_xticks(rates, [f"{x:g}" for x in rates])
+    n_closures = round(N_POSES * LOOP_DENSITY)
     label(top, "Trajectory error", "", "RMS error (tangent units)")
-    label(bottom, "Calibration", "outlier rate", "mean NEES / dof")
+    label(
+        bottom,
+        "Calibration of the robust back-ends",
+        f"outlier rate (share of the {n_closures} loop closures that are false)",
+        "mean NEES / dof",
+    )
 
     handles, labels = top.get_legend_handles_labels()
-    extra_h, extra_l = bottom.get_legend_handles_labels()
-    handles.append(extra_h[-1])
-    labels.append(extra_l[-1])
+    for handle, text in zip(*bottom.get_legend_handles_labels()):
+        if text not in labels:
+            handles.append(handle)
+            labels.append(text)
     fig.legend(
         handles,
         labels,
         loc="outside lower center",
-        ncols=3,
+        ncols=4,
         frameon=False,
         fontsize=8.5,
         labelcolor=INK_MUTED,

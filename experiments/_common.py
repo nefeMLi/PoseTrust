@@ -46,6 +46,19 @@ OBSERVED = "#2a78d6"
 BAND = "#d9d8d4"
 
 
+def bootstrap_interval(values: np.ndarray) -> tuple[float, float]:
+    """95% percentile-bootstrap interval for the mean of `values`, resampling
+    runs. Seeded from the values themselves, so the same results always give
+    the same interval."""
+    values = np.ascontiguousarray(values, dtype=float)
+    rng = np.random.default_rng(np.frombuffer(values.tobytes(), dtype=np.uint32))
+    boot = rng.choice(
+        values, size=(BOOTSTRAP_RESAMPLES, values.size), replace=True
+    ).mean(axis=1)
+    low, high = np.percentile(boot, [2.5, 97.5])
+    return float(low), float(high)
+
+
 def calibration(result) -> dict:
     """The calibration fields every experiment reports for one condition.
 
@@ -56,8 +69,7 @@ def calibration(result) -> dict:
     Two intervals, for two different questions. The acceptance band says what
     a calibrated solver is allowed to produce with this many runs; the
     bootstrap interval says how well this sweep pinned down what it actually
-    produced. The bootstrap is seeded from the NEES values themselves, so
-    the same results always give the same interval.
+    produced.
     """
     converged = result.converged
     fraction = float(converged.mean())
@@ -87,11 +99,7 @@ def calibration(result) -> dict:
     report = ConsistencyReport(values, result.free_dof, ALPHA)
     low, high = report.acceptance
 
-    rng = np.random.default_rng(np.frombuffer(values.tobytes(), dtype=np.uint32))
-    boot = rng.choice(
-        values, size=(BOOTSTRAP_RESAMPLES, values.size), replace=True
-    ).mean(axis=1)
-    ci_low, ci_high = np.percentile(boot, [2.5, 97.5]) / report.dof
+    ci_low, ci_high = np.array(bootstrap_interval(values)) / report.dof
     return {
         "dof": report.dof,
         **counts,
