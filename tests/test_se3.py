@@ -1,6 +1,4 @@
-"""Week-1 validation gate for SE(3): round-trip, identity, group validity,
-analytic-vs-numerical Jacobian, and small-angle stability. Mirrors test_lie.py.
-"""
+"""Tests for SE(3)."""
 
 from __future__ import annotations
 
@@ -58,26 +56,12 @@ def test_analytic_vs_numerical_jacobian(xi: np.ndarray) -> None:
     [0.0, 1e-12, 1e-8, 1e-5, 1e-4, 1e-3, 1e-2, 0.049, se3._EPS, 0.051, 0.1, 1.0, 3.0],
 )
 def test_exp_matches_matrix_exponential(theta: float) -> None:
-    """Independent oracle: scipy's expm shares none of this module's closed forms.
-
-    Deliberately sweeps across _EPS. A round-trip test cannot catch a misplaced
-    Taylor/direct crossover because log() inverts whatever error exp() made.
-    """
     axis = np.array([0.0, 0.6, 0.8])
     xi = np.concatenate([[1.3, -0.7, 0.4], theta * axis])
     np.testing.assert_allclose(se3.exp(xi), expm(hat_matrix(se3, xi)), rtol=0, atol=1e-14)
 
 
 def test_full_domain_sweep() -> None:
-    """Walk the entire domain densely instead of trusting a hand-picked grid.
-
-    Every numerical defect found in this module hid *between* spot-check
-    points: small-theta cancellation peaked just above the old threshold, and
-    the (1+cos) cancellation in _v_inv_coeff peaked at pi - 1e-6, which the
-    original near-pi grid skipped. Sweeping the range removes the chance to
-    pick the wrong samples. Also varies |rho| over nine orders of magnitude,
-    since the Q block depends on the translation.
-    """
     thetas = np.concatenate(
         [
             np.logspace(-14, -0.5, 80),
@@ -115,14 +99,6 @@ PI_AXES = [
 @pytest.mark.parametrize("gap", [1e-1, 4.5e-2, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 0.0])
 @pytest.mark.parametrize("axis", PI_AXES)
 def test_log_near_pi(gap: float, axis: np.ndarray) -> None:
-    """At theta = pi the antisymmetric part vanishes and stops carrying the axis.
-
-    The invariant is exp(log(T)) == T, not log(exp(xi)) == xi: at exactly pi the
-    log is genuinely multivalued (+pi*a and -pi*a are the same rotation, and the
-    translation part differs accordingly), so both are correct answers. Reading
-    the axis off the antisymmetric part alone returns a badly wrong pose here
-    (error ~0.6, not merely imprecise).
-    """
     axis = axis / np.linalg.norm(axis)
     theta = np.pi - gap
     T = se3.exp(np.concatenate([[0.5, 0.2, -0.3], theta * axis]))
@@ -135,13 +111,6 @@ def test_log_near_pi(gap: float, axis: np.ndarray) -> None:
 
 @pytest.mark.parametrize("fraction", [1.0, 0.8, 0.6, 0.4, 0.2])
 def test_taylor_and_direct_branches_agree(monkeypatch, fraction: float) -> None:
-    """Both branches must be accurate AT the crossover, not merely near zero.
-
-    Matters more here than in SE(2): the Q matrix divides by theta**4 and
-    theta**5, so its direct form cancels catastrophically long before the
-    round-trip or finite-difference tests would notice. Stated as a fraction
-    of _EPS so lowering the threshold into that regime fails the test.
-    """
     theta = fraction * se3._EPS
     axis = np.array([0.0, 0.6, 0.8])
     xi = np.concatenate([[1.3, -0.7, 0.4], theta * axis])
