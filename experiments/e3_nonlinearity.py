@@ -1,30 +1,4 @@
-"""E3 (Q2): sweep rotational noise, SE(2) and SE(3) separately. Report
-whether failure is graceful or abrupt, and the per-degree-of-freedom split.
-
-H2, as pre-registered: overconfidence grows with rotational noise and the
-onset is abrupt rather than gradual. H2 was already seen in preview before
-HYPOTHESES.md was written, and is recorded there as an observation rather
-than a prediction; this run is the proper measurement of it.
-
-H3 -- "SE(3) is materially worse calibrated than SE(2) at matched rotational
-uncertainty" -- was withdrawn before this ran, because no fair matching
-across groups of different dimension exists. See HYPOTHESES.md. In its place
-this reports, EXPLORATORY and not predicted, the rotation-error magnitude at
-which each group loses calibration. That is a threshold in radians, common to
-both groups, so it compares where each breaks rather than their values at an
-arbitrarily matched sigma.
-
-Why rotation and not translation: the exponential map is linear in the
-translational part and non-linear only through rotation, so rotation is the
-only axis along which the Laplace approximation can degrade. Translation
-noise is held fixed throughout to keep that attribution clean.
-
-Every noise level uses the same graph and the same seed, so run r at one
-level is run r at the next with its rotational draws scaled up. The sweep
-varies the noise and nothing else.
-
-Run:  python experiments/e3_nonlinearity.py [--runs N] [--figures-only]
-"""
+"""E3: calibration against rotational noise, in SE(2) and SE(3)."""
 
 from __future__ import annotations
 
@@ -62,27 +36,20 @@ LOOP_DENSITY = 0.3
 TURN = 0.25
 SEED = 200
 
-# Ordinal ramp from the reference palette's sequential blue, starting at the
-# step that still clears 2:1 against the light surface. Noise level is a
-# magnitude, so it is encoded light to dark in one hue rather than by category.
+# Sequential blue ramp, light to dark with noise.
 NOISE_RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]
 
 
 def condition(lie, rotation_sigma: float, n_runs: int) -> dict:
-    """One rotational noise level: NEES, coverage, and the per-DOF split."""
+    """Run one noise level: NEES, coverage and the per-DOF split."""
     sigma = np.full(lie.DOF, TRANSLATION_NOISE)
     sigma[lie.TRANSLATION_DOF :] = rotation_sigma
 
     scenario = make_scenario(
         lie, n_poses=N_POSES, loop_density=LOOP_DENSITY, seed=SEED, turn=TURN
     )
-    # Levenberg-Marquardt rather than plain Gauss-Newton. Both find the same
-    # optimum where both converge, so this does not change what is measured;
-    # it converges more often at high noise, and every run that fails to
-    # converge is dropped. Dropping them is necessary but not neutral: the
-    # survivors are the draws whose noise happened to be benign, which biases
-    # the estimate towards calibration exactly where miscalibration is worst.
-    # Converging more often shrinks that bias.
+    # LM converges more often than GN at high noise. Non-converged runs are
+    # dropped, which biases towards calibration, so fewer failures is better.
     result = monte_carlo(
         lie,
         scenario,
@@ -94,16 +61,12 @@ def condition(lie, rotation_sigma: float, n_runs: int) -> dict:
     converged = result.converged
     summary = calibration(result)
 
-    # Realised rotational error magnitude, in radians. This is the common unit
-    # the two groups can be compared in, since it measures how far the
-    # estimate actually turned away from the truth rather than what noise was
-    # injected into how many axes.
+    # RMS rotation error in radians, comparable across SE(2) and SE(3).
     free = [k for k in range(N_POSES) if k != result.anchor]
     rotation_error = result.errors[converged][:, free, lie.TRANSLATION_DOF :]
     rms_rotation = float(np.sqrt(np.mean(np.sum(rotation_error**2, axis=-1))))
 
-    # Translation against rotation. Pooled across poses, so correlated and
-    # descriptive: the formal test is the full-state NEES above.
+    # Translation vs rotation, pooled across poses (descriptive only).
     flat_errors = result.errors[converged][:, free].reshape(-1, lie.DOF)
     flat_marginals = result.marginals[converged][:, free].reshape(
         -1, lie.DOF, lie.DOF
@@ -200,7 +163,7 @@ def report_console(rows) -> None:
 
 
 def build_figure():
-    """NEES against rotational noise, with the acceptance band."""
+    """NEES against rotational noise."""
     rows = read_results("e3_nonlinearity")
     fig, axes = figure(nrows=1, ncols=2, size=(10.0, 4.2), sharey=True)
 
@@ -215,18 +178,12 @@ def build_figure():
         ci_low = np.array([r["ci_low"] for r in series])
         ci_high = np.array([r["ci_high"] for r in series])
 
-        # No acceptance band on this panel. It is 3% wide and the axis spans
-        # two decades, so it renders as a line indistinguishable from the one
-        # below it -- a legend entry pointing at something invisible. With
-        # intervals drawn, whether a point sits above 1.0 is readable directly;
-        # the band is in E2's figure, where the scale can show it.
+        # No acceptance band: it would be invisible on a two-decade log axis.
         ax.axhline(
             1.0, color=INK_MUTED, linewidth=2.0, linestyle="--", label="calibrated"
         )
 
-        # Conditions the analysis rejected are not estimates and must not be
-        # drawn as though they were. Those that converged but lost runs are
-        # biased towards calibration, so they are drawn hollow: lower bounds.
+        # Skip rejected conditions; draw ones that lost runs hollow (lower bounds).
         usable = np.array([r["usable"] for r in series])
         complete = np.array(
             [r["converged_fraction"] >= SURVIVORSHIP_FRACTION for r in series]
@@ -295,7 +252,7 @@ def build_figure():
 
 
 def build_coverage_figure():
-    """F2: coverage calibration curves across rotational noise levels."""
+    """Coverage curves across rotational noise levels."""
     rows = read_results("e3_nonlinearity")
     shown = [0.01, 0.06, 0.15, 0.30, 0.45]
     fig, axes = figure(nrows=1, ncols=2, size=(10.0, 4.4), sharey=True)
@@ -311,8 +268,7 @@ def build_coverage_figure():
                 for r in rows
                 if r["group"] == name
                 and abs(r["rotation_sigma"] - sigma) < 1e-9
-                # a condition the analysis rejected is not a measurement, so
-                # its curve does not belong on the same axes as ones that are
+                # rejected conditions are not measurements
                 and r["usable"]
             ]
             if not match:
@@ -327,9 +283,7 @@ def build_coverage_figure():
                 color=colour,
                 label=f"sd {sigma:g}",
             )
-        # A level the legend offers but this panel does not draw was rejected
-        # for convergence, not lost in rendering. Say which, or its absence
-        # reads as a bug rather than as a result.
+        # Name the levels left out because they didn't converge.
         absent = [
             sigma
             for sigma in shown
@@ -390,7 +344,7 @@ def figures() -> bool:
         try:
             print(f"figure written to {save_figure(builder(), name)}")
         except ImportError as exc:
-            print(f"{name} built but not written -- no usable renderer ({exc})")
+            print(f"{name} built but not written: no usable renderer ({exc})")
             written = False
     return written
 
