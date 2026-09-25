@@ -1,10 +1,4 @@
-"""Shared fixtures and helpers for the test suite.
-
-Trajectory generation itself lives in posetrust.simulate; only the test-local
-defaults and the finite-difference machinery live here, so there is one
-implementation of each thing rather than a test copy drifting away from the
-one the experiments actually use.
-"""
+"""Shared test fixtures."""
 
 from __future__ import annotations
 
@@ -21,27 +15,17 @@ GROUP_IDS = ["se2", "se3"]
 
 @pytest.fixture(params=GROUPS, ids=GROUP_IDS)
 def lie(request):
-    """Runs every test that requests it against both SE(2) and SE(3)."""
+    """Run against both SE(2) and SE(3)."""
     return request.param
 
 
 def short_trajectory(lie, n_poses: int = 12, turn: float = 0.35) -> list[np.ndarray]:
-    """posetrust.simulate.curved_trajectory with test defaults.
-
-    Shorter and more sharply curved than the harness default: the tests want
-    manifold effects to show up in a graph small enough to solve hundreds of
-    times per second.
-    """
+    """curved_trajectory with test defaults."""
     return _curved_trajectory(lie, n_poses=n_poses, turn=turn)
 
 
 def hat_matrix(lie, xi: np.ndarray) -> np.ndarray:
-    """The Lie-algebra matrix of xi, built independently of the library.
-
-    Used to drive scipy's expm as an oracle, so it must not call anything in
-    posetrust.lie -- otherwise the "independent" check would share the code it
-    is supposed to be checking.
-    """
+    """Lie algebra matrix of xi, built without the library."""
     xi = np.asarray(xi, dtype=float)
     if lie.DOF == 3:
         vx, vy, theta = xi
@@ -60,11 +44,7 @@ def hat_matrix(lie, xi: np.ndarray) -> np.ndarray:
 
 
 def numerical_right_jacobian(lie, xi: np.ndarray, h: float = 1e-6) -> np.ndarray:
-    """Central-difference Jr(xi): exp(xi)^-1 @ exp(xi + d) ~= exp(Jr @ d).
-
-    Deliberately exercises the group at tiny relative angles (~h), which is
-    where the Taylor-series fallbacks matter, not just where it is convenient.
-    """
+    """Central-difference right Jacobian."""
     dof = lie.DOF
     T0_inv = lie.inverse(lie.exp(xi))
     J = np.zeros((dof, dof))
@@ -84,12 +64,7 @@ def build_graph(
     noise: float = 0.0,
     seed: int = 0,
 ) -> PoseGraph:
-    """A deterministic odometry chain plus one closure from first pose to last.
-
-    Distinct from simulate.sample_graph on purpose: that one draws its
-    connectivity at random for an experimental condition, whereas unit tests
-    need the same small graph every time.
-    """
+    """Odometry chain plus one closure from the first pose to the last."""
     rng = np.random.default_rng(seed)
     graph = PoseGraph(lie)
     for T in truth:
@@ -119,7 +94,7 @@ def perturbed(lie, truth: list[np.ndarray], sigma: float = 0.25, seed: int = 1):
 
 @pytest.fixture
 def outlier_free_graph(lie):
-    """A small clean graph plus a mildly perturbed start, for robust-kernel tests."""
+    """Small clean graph and a perturbed start."""
     truth = short_trajectory(lie, n_poses=8)
     graph = build_graph(lie, truth, noise=0.02, seed=5)
     return graph, truth, perturbed(lie, truth, sigma=0.05)
