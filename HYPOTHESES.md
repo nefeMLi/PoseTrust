@@ -240,3 +240,25 @@ and the earlier results are superseded rather than kept alongside.
 4. **Verdict counts ignored multiplicity.** E4's summary counted raw
    `OVERCONFIDENT` verdicts. It now requires surviving Benjamini-Hochberg,
    as the confirmation rule above already said.
+
+---
+
+## Amendment, 2026-09-25: scope, and two terms left undefined
+
+**E5 is cut, and H5 is left unanswered.** The cut rules above allow it. E5
+needed public benchmarks, file loaders and a sparse solver, none of which
+were built: every graph in E1-E4 has at most twenty poses and is solved
+densely. H5 is neither confirmed nor refuted, and nothing in the results
+speaks to real data.
+
+**"Abrupt" in H2 was never defined.** No criterion was fixed in advance
+for what separates an abrupt onset from a steep gradual one, so H2's second
+clause cannot be judged against this document. E3 is reported
+descriptively instead: calibration holds up to a threshold and then
+degrades rapidly and monotonically, with no step change between
+neighbouring noise levels.
+
+**"Recovered accuracy" in E4 is an analysis choice, made after the first
+runs.** A method counts as having recovered at a rate when its trajectory
+error there is below twice its own error with no outliers. The threshold
+was not fixed here in advance and is reported as a choice, not a rule.

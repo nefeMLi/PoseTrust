@@ -9,9 +9,9 @@ so there is a single implementation of the chi-squared machinery.
 A note on what cannot be asked here. NEES needs the true poses, and the point
 of the Monte Carlo harness is that simulation is the only place they exist. On
 real data there is one dataset, one answer, and no way to ask what else might
-have happened -- which is why E5 tests consistency a different way, by holding
-constraints out and checking whether their residuals match the uncertainty the
-graph predicted for them.
+have happened. Testing a real dataset needs a different check, such as
+holding constraints out and asking whether their residuals match the
+uncertainty the graph predicted for them; that is outside this package.
 """
 
 from __future__ import annotations
