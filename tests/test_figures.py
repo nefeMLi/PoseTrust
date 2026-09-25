@@ -1,16 +1,4 @@
-"""Structural tests for the experiment figures.
-
-Figure code is the easiest thing in a research repo to leave unexercised: it
-runs once by hand, looks plausible, and is never touched again until the data
-shape changes underneath it. These build the real figure from the committed
-results and assert on what it contains.
-
-They deliberately stop short of rendering. Asserting that a chart *reads*
-well is not something a test can do -- that needs a person looking at the
-image. What a test can do is catch the failures that are not about taste: the
-wrong series count, a reference line that never got drawn, an identity
-encoded in colour alone, or the dual-axis anti-pattern.
-"""
+"""Structural checks on the experiment figures."""
 
 from __future__ import annotations
 
@@ -41,13 +29,13 @@ BUILDERS = {
 
 @pytest.fixture(scope="module")
 def e1_figure():
-    """The real E1 figure, built from the committed parquet results."""
+    """The E1 figure."""
     return build_e1()
 
 
 @pytest.fixture(params=sorted(BUILDERS), scope="module")
 def any_figure(request):
-    """Every experiment figure, for the checks that apply to all of them."""
+    """Each experiment figure in turn."""
     return BUILDERS[request.param]()
 
 
@@ -57,23 +45,16 @@ def legend_of(ax, fig):
 
 
 def test_figure_has_one_panel_per_group_and_view(e1_figure):
-    """Two groups by two views, as small multiples rather than overlaid series."""
     assert len(e1_figure.axes) == 4
 
 
 def test_every_panel_is_titled(any_figure):
-    # titles are set left-aligned, so get_title() must be asked for that
-    # location -- its default reads the (empty) centre title
+    # titles are left-aligned, so ask for loc='left'
     titles = [ax.get_title(loc="left") for ax in any_figure.axes]
     assert all(titles), "a panel without a title cannot be read on its own"
 
 
 def test_no_panel_uses_a_second_y_axis(any_figure):
-    """The dual-axis anti-pattern, asserted against rather than trusted.
-
-    Two y-scales on one frame let a reader infer any relationship the author
-    wants. Two measures of different scale belong in two panels.
-    """
     for ax in any_figure.axes:
         siblings = ax.get_shared_x_axes().get_siblings(ax)
         overlapping = [
@@ -85,7 +66,6 @@ def test_no_panel_uses_a_second_y_axis(any_figure):
 
 
 def test_distribution_panels_compare_observed_against_theory(e1_figure):
-    """A histogram of what happened, and the density it should have followed."""
     for ax in (e1_figure.axes[0], e1_figure.axes[2]):
         assert len(ax.patches) > 1, "no histogram drawn"
         assert len(ax.lines) >= 1, "no reference density drawn"
@@ -107,7 +87,6 @@ def test_coverage_panels_plot_observed_against_the_identity_line(e1_figure):
 
 
 def test_identity_is_never_encoded_by_colour_alone(any_figure):
-    """Every panel carries a legend, so a colourblind reader is not stranded."""
     for ax in any_figure.axes:
         legend = legend_of(ax, any_figure)
         assert legend is not None, "a multi-series panel needs a legend"
@@ -115,7 +94,6 @@ def test_identity_is_never_encoded_by_colour_alone(any_figure):
 
 
 def test_observed_series_uses_the_documented_palette_hue(e1_figure):
-    """One categorical hue, taken unchanged from the validated palette."""
     for ax in (e1_figure.axes[0], e1_figure.axes[2]):
         assert any(patch.get_facecolor() for patch in ax.patches)
     assert OBSERVED == "#2a78d6"
@@ -123,12 +101,6 @@ def test_observed_series_uses_the_documented_palette_hue(e1_figure):
 
 
 def test_axes_are_labelled(any_figure):
-    """Every axis is labelled, or shares one with a labelled sibling.
-
-    A shared y-axis is labelled once for the row rather than repeated on each
-    panel, so the requirement is that the reader can find the label, not that
-    every Axes object carries its own.
-    """
     for index, ax in enumerate(any_figure.axes):
         if not ax.get_xlabel():
             siblings = ax.get_shared_x_axes().get_siblings(ax)
@@ -151,12 +123,7 @@ def test_grid_is_recessive_and_behind_the_data(any_figure):
 
 
 def drawn_texts(fig):
-    """Every text the renderer will actually draw.
-
-    Ticks outside the view limits are computed but never drawn, so including
-    them produces phantom collisions -- an earlier version of this check
-    flagged two and both were invisible.
-    """
+    """Texts the renderer will actually draw."""
     out = []
     for ax in fig.axes:
         for text in [ax._left_title, ax.xaxis.label, ax.yaxis.label, *ax.texts]:
@@ -178,7 +145,7 @@ def drawn_texts(fig):
 
 
 def laid_out(fig):
-    """Run the layout engine and return a renderer that can measure text."""
+    """Run the layout and return a renderer that can measure text."""
     import io
 
     from _common import _svg_canvas
@@ -213,12 +180,6 @@ def test_no_drawn_text_escapes_the_canvas(any_figure):
 
 
 def test_no_drawn_labels_collide(any_figure):
-    """The automated half of "render it and look at it".
-
-    A test cannot judge whether a chart reads well, but it can catch the
-    failure that most often makes one unreadable: labels printed on top of
-    each other once the data changes shape.
-    """
     renderer, _, _ = laid_out(any_figure)
     boxes = [
         (t.get_text(), t.get_window_extent(renderer)) for t in drawn_texts(any_figure)
@@ -245,15 +206,8 @@ def test_panels_do_not_overlap_each_other(any_figure):
 
 
 def test_no_mark_is_drawn_without_a_legend_entry(any_figure):
-    """An unexplained line on a chart is chart junk.
-
-    The reference line marking the expected mean was drawn unlabelled at
-    first: visible, meaningful, and impossible for a reader to identify.
-    """
     for index, ax in enumerate(any_figure.axes):
-        # An errorbar is one labelled series drawn as several Line2Ds -- its
-        # marker and caps carry no label of their own, but the container's
-        # legend entry explains all of them.
+        # Errorbar parts are covered by their container's legend entry.
         owned = set()
         for container in ax.containers:
             for part in getattr(container, "lines", ()):
@@ -293,12 +247,6 @@ def ink_under(ax, box, renderer) -> float:
 
 
 def test_no_annotation_is_laid_over_the_data(any_figure):
-    """Legends and labels must not sit on top of the marks they describe.
-
-    This is the check that was missing when the label-collision test passed a
-    figure whose legend covered 1400 px^2 of histogram: comparing text against
-    text says nothing about text against data.
-    """
     renderer, _, _ = laid_out(any_figure)
     for index, ax in enumerate(any_figure.axes):
         legend = legend_of(ax, any_figure)
@@ -310,12 +258,6 @@ def test_no_annotation_is_laid_over_the_data(any_figure):
 
 
 def test_legend_placement_is_consistent_within_a_chart_type(e1_figure):
-    """Panels showing the same chart should place the legend the same way.
-
-    Deliberately per chart type rather than across the whole figure: an
-    earlier version demanded one position everywhere, and satisfying it drove
-    the legend onto the histogram. Not obscuring the data outranks symmetry.
-    """
     renderer, _, _ = laid_out(e1_figure)
 
     def position(ax):
@@ -332,7 +274,6 @@ def test_legend_placement_is_consistent_within_a_chart_type(e1_figure):
 
 
 def test_panel_titles_fit_inside_their_panel(any_figure):
-    """Titles now carry the headline number, so they can overflow."""
     renderer, _, _ = laid_out(any_figure)
     for index, ax in enumerate(any_figure.axes):
         title = ax._left_title
@@ -347,15 +288,6 @@ def test_panel_titles_fit_inside_their_panel(any_figure):
 
 @pytest.mark.parametrize("name", ["e2", "e3", "e4"])
 def test_point_estimates_carry_intervals(name):
-    """HYPOTHESES.md: "Every point estimate gets an interval."
-
-    A sweep plotted as bare markers invites the reader to see structure in
-    what is sampling noise -- which is exactly what the first version of the
-    E2 figure did, with a dramatic-looking zigzag entirely inside the band.
-    The acceptance band is not a substitute: it says what a calibrated solver
-    is allowed to produce, not how precisely this sweep measured it. Checked
-    on every sweep figure: E4 once shipped as bare lines because only E2 was.
-    """
     figure = BUILDERS[name]()
     for index, ax in enumerate(figure.axes):
         bars = [c for c in ax.containers if hasattr(c, "has_yerr")]
@@ -364,12 +296,6 @@ def test_point_estimates_carry_intervals(name):
 
 
 def test_sweep_conditions_are_evenly_spaced():
-    """Unevenly spaced conditions plotted on a linear axis distort the shape.
-
-    E2's densities run 0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.2: on a linear axis the
-    crowded low end exaggerates small differences into a visual trend. They
-    are separate experiments, so they are placed as ordered categories.
-    """
     figure = BUILDERS["e2"]()
     for ax in figure.axes:
         ticks = ax.get_xticks()
@@ -378,14 +304,6 @@ def test_sweep_conditions_are_evenly_spaced():
 
 
 def test_saved_figures_are_byte_identical_when_regenerated(tmp_path, monkeypatch):
-    """Regenerating an unchanged figure must not produce a diff.
-
-    matplotlib stamps SVGs with the current time and names internal elements
-    from a random salt, so an unchanged figure rewrote most of its own file.
-    Figures are committed here, so that noise would be permanent and every
-    review would have to read a few hundred changed lines to find out they
-    say nothing.
-    """
     import _common
 
     monkeypatch.setattr(_common, "FIGURES_DIR", tmp_path)
@@ -395,13 +313,7 @@ def test_saved_figures_are_byte_identical_when_regenerated(tmp_path, monkeypatch
 
 
 def _with_rejected(monkeypatch, module_name: str, name: str, pick) -> list[dict]:
-    """The committed results for `name`, with the rows `pick` selects marked
-    as convergence failures, served to the figure module in their place.
-
-    Whether a real sweep happens to contain a rejected condition is a fact
-    about the data, and changes when the data does; the figure's handling of
-    one has to be tested regardless.
-    """
+    """Committed results with some rows marked as convergence failures."""
     from _common import read_results
 
     rows = read_results(name)
@@ -414,13 +326,6 @@ def _with_rejected(monkeypatch, module_name: str, name: str, pick) -> list[dict]
 
 
 def test_rejected_conditions_are_not_plotted_as_measurements(monkeypatch):
-    """A condition the analysis threw out must not appear as a datum.
-
-    E3 rejects any condition converging on under half its runs, and the first
-    version of the figure drew one of those identically to the valid points.
-    A reader had no way to know one of the eight markers was a result the
-    study had already declined to report.
-    """
     rows = _with_rejected(
         monkeypatch, "e3_nonlinearity", "e3_nonlinearity",
         lambda r: r["group"] == "SE(3)" and r["rotation_sigma"] == 0.45,
@@ -447,12 +352,6 @@ def test_rejected_conditions_are_not_plotted_as_measurements(monkeypatch):
 
 
 def test_lines_break_rather_than_bridge_excluded_conditions(monkeypatch):
-    """A line joined across a rejected condition claims data that is not there.
-
-    Drawn as a continuous line, a method that produced no usable result at
-    some rates looked tracked across the whole sweep, with straight segments
-    spanning the gaps. Those gaps are NaN, so the line breaks.
-    """
     rows = _with_rejected(
         monkeypatch, "e4_perceptual_aliasing", "e4_aliasing",
         lambda r: r["method"] == "plain least squares" and r["rate"] in (0.1, 0.2),
@@ -476,12 +375,6 @@ def test_lines_break_rather_than_bridge_excluded_conditions(monkeypatch):
 
 
 def test_calibration_panel_separates_the_robust_methods():
-    """The robust back-ends differ by a few percent, in both directions.
-
-    With plain least squares on the same axis the scale ran to several
-    hundred and all four collapsed into one line, hiding the finding that
-    separates them: Cauchy and GNC read conservative, switchable does not.
-    """
     figure = BUILDERS["e4"]()
     calibration = figure.axes[1]
     low, high = calibration.get_ylim()

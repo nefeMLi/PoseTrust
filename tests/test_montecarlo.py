@@ -1,12 +1,4 @@
-"""Tests for the Monte Carlo harness and trajectory/noise generators.
-
-The important one is test_near_linear_gaussian_is_consistent: it is the E1
-validation gate in miniature. On a near-linear-Gaussian problem the Laplace
-covariance is exact, so the empirical spread of the estimates must match what
-the solver reported. It exercises every layer at once -- Lie algebra, factor
-Jacobians, the optimizer, selected inversion, and the NEES statistics -- so if
-any of them is wrong this is where it surfaces.
-"""
+"""Tests for the Monte Carlo harness and scenarios."""
 
 from __future__ import annotations
 
@@ -38,7 +30,6 @@ def test_noise_model_information_inverts_covariance(lie):
 
 
 def test_noise_model_is_anisotropic(lie):
-    """A scalar noise level would assume away one of the swept axes."""
     sigma = np.linspace(0.01, 0.05, lie.DOF)
     noise = NoiseModel(sigma)
     draws = np.array([noise.sample(np.random.default_rng(k)) for k in range(4000)])
@@ -68,7 +59,6 @@ def test_loop_closure_density_controls_edge_count(density):
 
 @pytest.mark.parametrize("n_poses,density", [(12, 0.05), (12, 0.1), (12, 0.8)])
 def test_density_that_is_not_a_whole_count_is_refused(n_poses, density):
-    """Rounding here once gave 0.05 and 0.1 the same single closure."""
     with pytest.raises(ValueError, match="not a whole number"):
         loop_closure_edges(n_poses, density, np.random.default_rng(0))
 
@@ -79,7 +69,6 @@ def test_more_closures_than_candidate_pairs_is_refused():
 
 
 def test_denser_graphs_contain_sparser_ones():
-    """Same seed, more closures: the sweep adds edges rather than resampling."""
     previous: set = set()
     for density in [0.0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.2]:
         edges = set(loop_closure_edges(20, density, np.random.default_rng(9)))
@@ -102,15 +91,11 @@ def test_outlier_rate_marks_the_right_number_of_closures(lie):
 
 
 def test_outlier_rate_that_is_not_a_whole_count_is_refused(lie):
-    """Ten closures at 5% was silently zero outliers: a clean run labelled corrupt."""
     with pytest.raises(ValueError, match="not a whole number"):
         make_scenario(lie, n_poses=10, loop_density=1.0, outlier_rate=0.05, seed=0)
 
 
 def test_higher_outlier_rates_add_to_the_lower_rates_outliers(lie):
-    """Same seed: raising the rate adds false closures, keeping earlier ones
-    and the places they claim. Otherwise neighbouring rates differ in which
-    closures are false as well as how many."""
     previous: dict = {}
     for rate in [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]:
         scenario = make_scenario(
@@ -122,8 +107,6 @@ def test_higher_outlier_rates_add_to_the_lower_rates_outliers(lie):
 
 
 def test_noise_is_common_across_outlier_rates(lie):
-    """The same generator state gives every true edge the same measurement
-    whatever else is false, so conditions can be compared run by run."""
     noise = NoiseModel(np.full(lie.DOF, 0.02))
     graphs = []
     for rate in (0.0, 0.3):
@@ -140,11 +123,6 @@ def test_noise_is_common_across_outlier_rates(lie):
 
 
 def test_measurement_is_the_true_relative_pose_perturbed_by_the_noise(lie):
-    """Z == (Ti^-1 Tj) @ exp(eps). That identity is what gives Omega its meaning.
-
-    Checked by replaying the same RNG stream rather than by driving the noise
-    to zero, which would demand an infinite information matrix.
-    """
     scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=0)
     noise = NoiseModel(np.full(lie.DOF, 0.01))
 
@@ -164,13 +142,11 @@ def test_measurement_is_the_true_relative_pose_perturbed_by_the_noise(lie):
 
 
 def test_zero_noise_scale_is_rejected(lie):
-    """An infinite information matrix must fail loudly, not silently divide by zero."""
     with pytest.raises(ValueError, match="strictly positive"):
         NoiseModel(np.zeros(lie.DOF))
 
 
 def test_outliers_produce_wrong_measurements(lie):
-    """A corrupted closure is a confident match to the wrong place."""
     scenario = make_scenario(
         lie, n_poses=20, loop_density=1.0, outlier_rate=0.5, seed=3
     )
@@ -188,7 +164,6 @@ def test_outliers_produce_wrong_measurements(lie):
 
 
 def test_dead_reckoning_composes_the_odometry_measurements(lie):
-    """Its contract is to chain the measurements it was given, drift included."""
     scenario = make_scenario(lie, n_poses=6, loop_density=0.0, seed=0)
     graph = sample_graph(
         lie, scenario, NoiseModel(np.full(lie.DOF, 0.01)), np.random.default_rng(0)
@@ -203,7 +178,6 @@ def test_dead_reckoning_composes_the_odometry_measurements(lie):
 
 
 def test_monte_carlo_is_reproducible(lie):
-    """Same seed, same answer -- a result nobody can rerun is not a result."""
     scenario = make_scenario(lie, n_poses=5, loop_density=0.4, seed=0, turn=0.05)
     noise = NoiseModel(np.full(lie.DOF, 0.01))
     a = monte_carlo(lie, scenario, noise, n_runs=8, seed=42)
@@ -230,13 +204,6 @@ def test_monte_carlo_shapes_and_gauge(lie):
 
 
 def test_near_linear_gaussian_is_consistent(lie):
-    """The E1 gate in miniature: where Laplace is exact, NEES must agree.
-
-    Small noise and a gentle turn keep the problem close to linear-Gaussian,
-    the regime in which the reported covariance is not an approximation at
-    all. Anything other than a consistent verdict here means a defect
-    somewhere in the stack, not a finding about SLAM.
-    """
     scenario = make_scenario(lie, n_poses=N_POSES, loop_density=0.5, seed=1, turn=0.05)
     noise = NoiseModel(np.full(lie.DOF, 1e-3))
     result = monte_carlo(lie, scenario, noise, n_runs=N_RUNS, seed=7)
@@ -251,11 +218,6 @@ def test_near_linear_gaussian_is_consistent(lie):
 
 
 def test_large_rotational_noise_becomes_overconfident():
-    """Q2's hypothesis, in miniature: manifold non-linearity costs calibration.
-
-    Not a claim about the real world -- one trajectory, one seed. It pins the
-    behaviour so that a change which silently flattens the effect is noticed.
-    """
     from posetrust.lie import se2
 
     scenario = make_scenario(se2, n_poses=8, loop_density=0.25, seed=1, turn=0.3)
@@ -264,10 +226,7 @@ def test_large_rotational_noise_becomes_overconfident():
         n_runs=60, seed=11, solver=levenberg_marquardt,
     )
 
-    # Every run converges. That was not always so: under a cruder damping rule
-    # and a hundred-iteration budget a minority stopped short, and excluding
-    # them -- which the analysis must do -- silently dropped the hardest
-    # draws. Pinned so that a regression in the solver is noticed here.
+    # Every run should converge; drops here would mean an LM regression.
     assert result.converged.all()
     values = result.nees_full
     assert classify(values, result.free_dof) != CONSISTENT
@@ -275,8 +234,6 @@ def test_large_rotational_noise_becomes_overconfident():
 
 
 def test_a_graph_too_short_to_close_accepts_only_zero_closures():
-    """A three-pose graph has nothing to close; min_separation excludes it all.
-    Asking for none is fine; asking for some must not quietly return none."""
     assert loop_closure_edges(3, density=0.0, rng=np.random.default_rng(0)) == []
     with pytest.raises(ValueError, match="pose pairs"):
         loop_closure_edges(3, density=1.0, rng=np.random.default_rng(0))
@@ -294,12 +251,6 @@ def test_result_accessors_expose_per_pose_slices(lie):
 
 
 def test_odometry_initialization_reaches_the_same_optimum(lie):
-    """Starting from dead reckoning is the realistic path, and E4's.
-
-    At modest noise it must land on the same optimum as starting from the
-    truth; where it does not, that is a convergence result rather than a
-    calibration one, which is exactly why the two are separable here.
-    """
     scenario = make_scenario(lie, n_poses=5, loop_density=0.6, seed=2, turn=0.05)
     noise = NoiseModel(np.full(lie.DOF, 5e-3))
     from_truth = monte_carlo(lie, scenario, noise, n_runs=12, seed=5)

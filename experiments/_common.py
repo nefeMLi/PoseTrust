@@ -1,14 +1,4 @@
-"""Shared plumbing for the experiment scripts: the analysis rules fixed in
-HYPOTHESES.md, where results go, how they are written, and the figure style
-they share.
-
-The split between a run stage and a figure stage is deliberate. Sweeps take
-minutes to hours; figures take seconds. Writing the raw per-condition results
-to parquet and regenerating every figure from that file means a reviewer can
-reproduce the plots on a laptop without re-running the study, and that a
-change to a label or an axis never silently re-rolls the numbers underneath
-it.
-"""
+"""Shared analysis rules, results I/O and figure style for the experiments."""
 
 from __future__ import annotations
 
@@ -26,19 +16,14 @@ ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
 FIGURES_DIR = ROOT / "figures"
 
-# Analysis decisions pre-registered in HYPOTHESES.md. Defined once here so
-# that no experiment can quietly apply a different rule from the others.
+# Analysis rules fixed in HYPOTHESES.md.
 ALPHA = 0.05
 MIN_CONVERGED_FRACTION = 0.5
-# Below this converged fraction a usable condition is flagged as a lower
-# bound: the runs that survive are the ones whose noise was benign.
+# Usable conditions below this converged fraction are lower bounds.
 SURVIVORSHIP_FRACTION = 0.9
 BOOTSTRAP_RESAMPLES = 2000
 
-# Reference data-visualisation palette, used unchanged. Only one categorical
-# hue is ever in play here: the observed quantity. Everything a chart compares
-# it against is a theoretical reference, which wears neutral ink and a dashed
-# stroke so it reads as the baseline rather than as a second series.
+# Reference palette: the observed series is blue, references are neutral.
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
 INK_MUTED = "#52514e"
@@ -47,9 +32,7 @@ BAND = "#d9d8d4"
 
 
 def bootstrap_interval(values: np.ndarray) -> tuple[float, float]:
-    """95% percentile-bootstrap interval for the mean of `values`, resampling
-    runs. Seeded from the values themselves, so the same results always give
-    the same interval."""
+    """95% bootstrap interval for the mean, resampling runs."""
     values = np.ascontiguousarray(values, dtype=float)
     rng = np.random.default_rng(np.frombuffer(values.tobytes(), dtype=np.uint32))
     boot = rng.choice(
@@ -60,17 +43,7 @@ def bootstrap_interval(values: np.ndarray) -> tuple[float, float]:
 
 
 def calibration(result) -> dict:
-    """The calibration fields every experiment reports for one condition.
-
-    Non-converged runs are excluded and counted, and a condition under the
-    minimum converged fraction is reported as a convergence failure rather
-    than as a calibration result.
-
-    Two intervals, for two different questions. The acceptance band says what
-    a calibrated solver is allowed to produce with this many runs; the
-    bootstrap interval says how well this sweep pinned down what it actually
-    produced.
-    """
+    """Calibration summary for one condition, excluding non-converged runs."""
     converged = result.converged
     fraction = float(converged.mean())
     usable = fraction >= MIN_CONVERGED_FRACTION
@@ -82,9 +55,7 @@ def calibration(result) -> dict:
     }
     values = result.nees_full[converged]
     if values.size < 2:
-        # Too few survivors for any statistic. Only reachable by a condition
-        # that is already unusable, and recorded as such rather than raised:
-        # a solver that gives no answer is a result.
+        # Too few converged runs for any statistic: a convergence failure.
         nan = float("nan")
         return {
             "dof": int(result.free_dof),
@@ -115,11 +86,7 @@ def calibration(result) -> dict:
 
 
 def mark_fdr(rows: list[dict]) -> None:
-    """Benjamini-Hochberg across every usable condition of one experiment.
-
-    Every condition is a test, so at alpha = 0.05 roughly one clean condition
-    in twenty would be flagged by chance alone.
-    """
+    """Mark which usable conditions survive Benjamini-Hochberg."""
     usable = [r for r in rows if r["usable"]]
     flagged = benjamini_hochberg(np.array([r["pvalue"] for r in usable]), ALPHA)
     for row, reject in zip(usable, flagged):
@@ -129,13 +96,7 @@ def mark_fdr(rows: list[dict]) -> None:
 
 
 def survivorship_warning(rows: list[dict], describe) -> None:
-    """Name the usable conditions that dropped enough runs to be lower bounds.
-
-    Dropping non-converged runs is necessary but not neutral: the survivors
-    are the draws whose noise happened to be benign, so a condition losing
-    runs reads as better calibrated than it is. `describe(row)` names the
-    condition in the experiment's own terms.
-    """
+    """Flag usable conditions that lost enough runs to be biased."""
     suspect = [
         r for r in rows if r["usable"] and r["converged_fraction"] < SURVIVORSHIP_FRACTION
     ]
@@ -173,15 +134,7 @@ def figure(
     sharey: bool = False,
     sharex: bool = False,
 ):
-    """A figure on the chart surface, with recessive axes and no chart junk.
-
-    Built as a bare Figure rather than through pyplot, and laid out by the
-    constrained engine rather than an explicit tight_layout call. Both choices
-    keep figure *construction* free of any rendering backend, so the plotting
-    logic can be exercised by the test suite on a machine that cannot
-    rasterise -- only save_figure() below needs a working renderer. It also
-    avoids pyplot's global figure registry, which scripts leak.
-    """
+    """Empty figure in the shared chart style."""
     fig = Figure(figsize=size, facecolor=SURFACE, layout="constrained")
     axes = fig.subplots(nrows, ncols, sharey=sharey, sharex=sharex)
     for ax in np.atleast_1d(np.asarray(axes)).ravel():
@@ -198,19 +151,7 @@ def figure(
 
 
 def _svg_canvas():
-    """The SVG canvas class, working around platforms that block Agg.
-
-    matplotlib's backend_svg imports backend_mixed, which imports backend_agg
-    at module level, so every output format transitively needs the Agg
-    extension even when nothing is rasterised. Where that extension cannot
-    load -- an unsigned native binary under Windows Smart App Control, for
-    instance -- a pure-vector figure is still perfectly renderable, because
-    RendererAgg is imported and then never instantiated.
-
-    So the import is retried against a stub that raises if it is ever really
-    used. The stub is installed only after the honest import has already
-    failed, so nothing changes on a machine where Agg works.
-    """
+    """SVG canvas class, with a stub where the Agg extension is blocked."""
     try:
         from matplotlib.backends.backend_svg import FigureCanvasSVG
     except ImportError:
@@ -234,21 +175,12 @@ def _svg_canvas():
 
 
 def save_figure(fig, name: str) -> Path:
-    """Write figures/<name>.svg.
-
-    Vector rather than raster: it renders natively in a README, stays sharp
-    at any zoom, is usually smaller for line work, and needs no rasteriser --
-    which is what makes the figures reproducible on a locked-down machine.
-    """
+    """Write figures/<name>.svg, byte-identical across reruns."""
     FIGURES_DIR.mkdir(exist_ok=True)
     path = FIGURES_DIR / f"{name}.svg"
     _svg_canvas()(fig)
 
-    # Deterministic output. By default matplotlib stamps the SVG with the
-    # current time and names its internal elements from a random salt, so
-    # regenerating an unchanged figure rewrites most of the file and shows up
-    # as a large diff that has to be read to discover it says nothing. Figures
-    # are committed here, so that noise would be permanent.
+    # Fixed hash salt and no timestamp, so an unchanged figure gives no diff.
     matplotlib.rcParams["svg.hashsalt"] = name
     fig.savefig(path, facecolor=SURFACE, metadata={"Date": None})
     return path

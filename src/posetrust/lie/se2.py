@@ -1,30 +1,18 @@
-"""SE(2) Lie group: exp/log maps and the right Jacobian.
-
-Convention: a pose is a 3x3 homogeneous matrix [[R, t], [0, 1]].
-A tangent vector xi = [vx, vy, theta] maps to SE(2) via exp(), and
-exp(xi + d) ~= exp(xi) @ exp(right_jacobian(xi) @ d) for small d —
-this is the Jr used by the Gauss-Newton update step.
-"""
+"""SE(2): exp, log, adjoint and right Jacobian."""
 
 from __future__ import annotations
 
 import numpy as np
 
-# Crossover between the Taylor series and the direct trigonometric formulas.
-# Both branches must be accurate AT this radius, which puts it far higher than
-# the naive "just above sqrt(machine epsilon)" reasoning suggests. The direct
-# form of (theta - sin(theta))/theta**2 carries relative error ~eps/theta**2,
-# so it is still losing ~8 significant digits at theta = 1e-4; the series
-# below (five terms) is exact to ~1e-19 out to 5e-2. Measured worst-case
-# error across the whole crossover is ~1e-15 (see the small-angle tests).
+# Below this angle use the Taylor series. It has to be this large because
+# the direct formulas lose precision to cancellation well above 1e-4.
 _EPS = 5e-2
 
 
 # Degrees of freedom of the tangent space, so callers can stay group-agnostic.
 DOF = 3
 
-# xi is ordered [translation..., rotation...]; this is where it splits, so a
-# per-degree-of-freedom breakdown can separate the two.
+# xi = [translation, rotation]; the index where they split.
 TRANSLATION_DOF = 2
 
 
@@ -34,7 +22,7 @@ def rotation_matrix(theta: float) -> np.ndarray:
 
 
 def _ab(theta: float) -> tuple[float, float]:
-    """a = sin(theta)/theta, b = (1 - cos(theta))/theta, Taylor-stable near 0."""
+    """sin(t)/t and (1 - cos t)/t, stable near zero."""
     if abs(theta) < _EPS:
         t2 = theta**2
         a = 1.0 - t2 / 6.0 + t2**2 / 120.0 - t2**3 / 5040.0 + t2**4 / 362880.0
@@ -49,7 +37,7 @@ def _ab(theta: float) -> tuple[float, float]:
 
 
 def _v_matrix(theta: float) -> np.ndarray:
-    """Left Jacobian of SO(2): maps the translational part of xi to SE(2) t."""
+    """Left Jacobian of SO(2)."""
     a, b = _ab(theta)
     return np.array([[a, -b], [b, a]])
 
@@ -61,7 +49,7 @@ def _v_inv_matrix(theta: float) -> np.ndarray:
 
 
 def exp(xi: np.ndarray) -> np.ndarray:
-    """se(2) -> SE(2). xi = [vx, vy, theta]. Returns a 3x3 homogeneous matrix."""
+    """se(2) -> SE(2)."""
     xi = np.asarray(xi, dtype=float)
     v, theta = xi[:2], xi[2]
     T = np.eye(3)
@@ -71,7 +59,7 @@ def exp(xi: np.ndarray) -> np.ndarray:
 
 
 def log(T: np.ndarray) -> np.ndarray:
-    """SE(2) -> se(2). Returns xi = [vx, vy, theta]."""
+    """SE(2) -> se(2)."""
     R, t = T[:2, :2], T[:2, 2]
     theta = np.arctan2(R[1, 0], R[0, 0])
     v = _v_inv_matrix(theta) @ t
@@ -91,12 +79,7 @@ def inverse(T: np.ndarray) -> np.ndarray:
 
 
 def adjoint(T: np.ndarray) -> np.ndarray:
-    """Adj(T), defined by T @ exp(x) @ inverse(T) == exp(Adj(T) @ x).
-
-    Moves a tangent perturbation from one frame to another, which is what
-    lets a relative-pose residual be differentiated with respect to both of
-    the poses it connects.
-    """
+    """Adjoint matrix of T."""
     R, t = T[:2, :2], T[:2, 2]
     A = np.eye(3)
     A[:2, :2] = R
@@ -105,7 +88,7 @@ def adjoint(T: np.ndarray) -> np.ndarray:
 
 
 def right_jacobian(xi: np.ndarray) -> np.ndarray:
-    """Right Jacobian Jr(xi): exp(xi + d) ~= exp(xi) @ exp(Jr(xi) @ d)."""
+    """Right Jacobian Jr(xi)."""
     xi = np.asarray(xi, dtype=float)
     v, theta = xi[:2], xi[2]
     a, b = _ab(theta)

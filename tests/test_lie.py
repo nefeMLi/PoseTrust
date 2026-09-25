@@ -1,9 +1,4 @@
-"""Week-1 validation gate for SE(2): round-trip, identity, group validity,
-analytic-vs-numerical Jacobian, and small-angle stability.
-
-If any of these fail, nothing built on top of se2.py (factors, optimizer,
-covariance) can be trusted — this is the E1 gate from the project spec.
-"""
+"""Tests for SE(2)."""
 
 from __future__ import annotations
 
@@ -61,24 +56,11 @@ def test_analytic_vs_numerical_jacobian(xi: np.ndarray) -> None:
     [0.0, 1e-12, 1e-8, 1e-5, 1e-4, 1e-3, 1e-2, 0.049, se2._EPS, 0.051, 0.1, 1.0, 3.0],
 )
 def test_exp_matches_matrix_exponential(theta: float) -> None:
-    """Independent oracle: scipy's expm shares none of this module's closed forms.
-
-    Deliberately sweeps across _EPS. A round-trip test cannot catch a misplaced
-    Taylor/direct crossover because log() inverts whatever error exp() made —
-    that blind spot once hid a 1e-9 error in the Jacobian here.
-    """
     xi = np.array([1.3, -0.7, theta])
     np.testing.assert_allclose(se2.exp(xi), expm(hat_matrix(se2, xi)), rtol=0, atol=1e-14)
 
 
 def test_full_domain_sweep() -> None:
-    """Walk the entire domain densely instead of trusting a hand-picked grid.
-
-    The small-angle defect in this file peaked just above the old threshold and
-    was invisible to every spot check around it. Sweeping removes the chance to
-    pick the wrong samples; |v| is varied too, since Jr's last column scales
-    with the translation.
-    """
     thetas = np.concatenate(
         [
             np.logspace(-14, -0.5, 100),
@@ -98,16 +80,6 @@ def test_full_domain_sweep() -> None:
 
 @pytest.mark.parametrize("fraction", [1.0, 0.8, 0.6, 0.4, 0.2])
 def test_taylor_and_direct_branches_agree(monkeypatch, fraction: float) -> None:
-    """Both branches must be accurate AT the crossover, not merely near zero.
-
-    Production uses the direct branch only for theta >= _EPS, so that is
-    exactly where it has to be right. The five-term series is exact to ~1e-19
-    here, so any disagreement is the direct trigonometric branch bleeding
-    precision to cancellation. Stated as a fraction of _EPS so that lowering
-    the threshold into the cancelling regime fails this test rather than
-    silently shipping: the failure is invisible to round-trip tests (log undoes
-    exp's error) and to finite-difference Jacobian checks (floor ~1e-10).
-    """
     theta = fraction * se2._EPS
     xi = np.array([1.3, -0.7, theta])
 

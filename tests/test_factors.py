@@ -1,10 +1,4 @@
-"""Tests for pose-graph factor construction, residuals, and Jacobians.
-
-The Jacobians are the load-bearing part: they build H, H becomes the reported
-covariance, and the whole study is about whether that covariance is honest. A
-sign error here would not break convergence loudly — it would quietly bias
-every marginal.
-"""
+"""Tests for residuals and factor Jacobians."""
 
 from __future__ import annotations
 
@@ -13,11 +7,9 @@ from itertools import pairwise
 import numpy as np
 from conftest import build_graph, perturbed, short_trajectory
 
-from posetrust.optimize.gauge import gauge_dimension
-
 
 def numerical_factor_jacobians(graph, factor, poses, h=1e-6):
-    """Central differences w.r.t. right perturbations of pose i and pose j."""
+    """Central-difference factor Jacobians."""
     lie = graph.lie
     dof = lie.DOF
     Ni, Nj = np.zeros((dof, dof)), np.zeros((dof, dof))
@@ -43,7 +35,6 @@ def numerical_factor_jacobians(graph, factor, poses, h=1e-6):
 
 
 def test_residual_is_zero_at_truth(lie) -> None:
-    """A noise-free measurement must be explained exactly by the true poses."""
     truth = short_trajectory(lie)
     graph = build_graph(lie, truth)
     for factor in graph.factors:
@@ -53,7 +44,6 @@ def test_residual_is_zero_at_truth(lie) -> None:
 
 
 def test_residual_is_nonzero_when_wrong(lie) -> None:
-    """Guards against a residual that is trivially zero for the wrong reason."""
     truth = short_trajectory(lie)
     graph = build_graph(lie, truth)
     bad = perturbed(lie, truth, sigma=0.3)
@@ -74,7 +64,6 @@ def test_factor_jacobians_match_finite_differences(lie) -> None:
 
 
 def test_factor_jacobians_converge_quadratically(lie) -> None:
-    """A wrong closed form plateaus as h shrinks; a right one falls as h**2."""
     truth = short_trajectory(lie)
     graph = build_graph(lie, truth)
     poses = perturbed(lie, truth, sigma=0.3)
@@ -104,15 +93,10 @@ def test_information_matrix_structure(lie) -> None:
 
 
 def test_gauge_freedom_is_exactly_the_group_dimension(lie) -> None:
-    """H's null space is the rigid motion of the whole graph — DOF dimensions.
-
-    This is the reason gauge fixing is not optional: without it H is singular
-    and the covariance it implies is infinite along those directions.
-    """
     truth = short_trajectory(lie)
     graph = build_graph(lie, truth)
     H, _ = graph.linearize(truth)
-    null_dim = gauge_dimension(H)
+    null_dim = int(np.sum(np.abs(np.linalg.eigvalsh(H)) < 1e-8))
     assert null_dim == lie.DOF, f"expected {lie.DOF} gauge directions, got {null_dim}"
 
 

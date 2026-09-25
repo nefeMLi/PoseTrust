@@ -1,10 +1,4 @@
-"""Pose-graph structure: odometry and loop-closure factors with full
-information matrices, over SE(2) or SE(3) poses.
-
-The group is injected rather than hard-coded — pass the se2 or se3 module as
-`lie` and everything below is group-agnostic. Q2 of the study compares the two
-directly, so they must run through identical code.
-"""
+"""Pose graph over SE(2) or SE(3)."""
 
 from __future__ import annotations
 
@@ -15,13 +9,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Factor:
-    """A relative-pose constraint: from pose i, pose j is observed at `measurement`.
-
-    `information` is Omega, the inverse covariance of the measurement expressed
-    in the tangent space — a full matrix rather than a scalar weight, so
-    anisotropic and correlated noise are both representable. Noise anisotropy
-    is one of the axes the Monte Carlo harness sweeps.
-    """
+    """Relative-pose measurement from pose i to pose j."""
 
     i: int
     j: int
@@ -30,7 +18,7 @@ class Factor:
 
 
 class PoseGraph:
-    """Poses plus the constraints between them, and the linear system they induce."""
+    """Poses, factors, and the linear system they give."""
 
     def __init__(self, lie) -> None:
         self.lie = lie
@@ -39,7 +27,7 @@ class PoseGraph:
 
     @property
     def dof(self) -> int:
-        """Tangent-space dimension per pose: 3 for SE(2), 6 for SE(3)."""
+        """Tangent dimension per pose."""
         return self.lie.DOF
 
     def add_pose(self, T: np.ndarray) -> int:
@@ -59,12 +47,7 @@ class PoseGraph:
         )
 
     def residual(self, factor: Factor, poses: list[np.ndarray]) -> np.ndarray:
-        """r = log(Z^-1 @ Ti^-1 @ Tj): how far the estimate sits from the measurement.
-
-        Expressed in the tangent space, so it is the manifold error rather than
-        a naive difference of matrix entries — the same distinction the NEES
-        computation depends on later.
-        """
+        """r = log(Z^-1 Ti^-1 Tj)."""
         lie = self.lie
         predicted = lie.compose(lie.inverse(poses[factor.i]), poses[factor.j])
         return lie.log(lie.compose(lie.inverse(factor.measurement), predicted))
@@ -72,14 +55,7 @@ class PoseGraph:
     def factor_jacobians(
         self, factor: Factor, poses: list[np.ndarray]
     ) -> tuple[np.ndarray, np.ndarray]:
-        """d(residual)/d(delta_i), d(residual)/d(delta_j) for right perturbations.
-
-        With Ti <- Ti @ exp(delta_i) and M = Ti^-1 @ Tj, pushing both
-        perturbations to the right of the error pose gives
-            E(delta) = E0 @ exp(-Adj(M^-1) delta_i) @ exp(delta_j),
-        so to first order the combined perturbation is
-        -Adj(M^-1) delta_i + delta_j, and log() contributes Jr^-1(r0).
-        """
+        """Residual Jacobians for right perturbations of Ti and Tj."""
         lie = self.lie
         r0 = self.residual(factor, poses)
         jr_inv = np.linalg.inv(lie.right_jacobian(r0))
@@ -87,7 +63,7 @@ class PoseGraph:
         return -jr_inv @ lie.adjoint(m_inv), jr_inv
 
     def chi2(self, poses: list[np.ndarray]) -> float:
-        """Sum of r^T Omega r — the objective Gauss-Newton is minimising."""
+        """Sum of r^T Omega r over all factors."""
         total = 0.0
         for factor in self.factors:
             r = self.residual(factor, poses)
@@ -97,20 +73,7 @@ class PoseGraph:
     def linearize(
         self, poses: list[np.ndarray], weights: np.ndarray | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Assemble H = sum w J^T Omega J and b = sum w J^T Omega r.
-
-        `weights` is one scale per factor, used by the robust back-ends. It
-        multiplies the information matrix, so a down-weighted constraint
-        contributes less to the estimate *and* less to H -- which means the
-        covariance a robust method reports is built from the reweighted
-        information. Whether that covariance stays honest is precisely what
-        the perceptual-aliasing experiment asks, so the weighting has to reach
-        H rather than being applied only to the residuals.
-
-        H is assembled dense. At the graph sizes this study uses each solve
-        is milliseconds, so the sparsity has never been worth exploiting; if
-        that changes, the interface does not.
-        """
+        """Build H and b, optionally with per-factor weights."""
         n = len(self.poses) * self.dof
         H = np.zeros((n, n))
         b = np.zeros(n)
@@ -134,11 +97,7 @@ class PoseGraph:
         return H, b
 
     def retract(self, poses: list[np.ndarray], delta: np.ndarray) -> list[np.ndarray]:
-        """Apply a tangent-space step: T <- T @ exp(delta), pose by pose.
-
-        The retraction is what keeps the estimate on the manifold instead of
-        drifting off it the way a vector-space update would.
-        """
+        """Apply T <- T exp(delta) pose by pose."""
         d = self.dof
         return [
             self.lie.compose(T, self.lie.exp(delta[k * d : (k + 1) * d]))

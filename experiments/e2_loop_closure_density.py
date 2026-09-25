@@ -1,30 +1,4 @@
-"""E2 (Q1): sweep loop-closure density from odometry-only to densely
-constrained; report NEES against density with the chi-squared band (F1).
-
-H1, as pre-registered: overconfidence increases as loop-closure density
-falls, the odometry-only end is the worst calibrated, and consistency
-improves monotonically as constraints are added.
-
-The sparse end is not an academic corner. An edge system spends most of its
-life there: loop closures arrive rarely, and between them the estimate is a
-chain of odometry with error accumulating along it. If the reported
-covariance is going to mislead anywhere, that is the regime where it matters,
-and it is also where the linearisation has the least to hold it down.
-
-Analysis follows HYPOTHESES.md rather than being chosen here: alpha = 0.05
-two-sided, Benjamini-Hochberg across the conditions of this sweep, at least
-200 runs each, non-converged runs excluded and counted, and a condition with
-under half its runs converged reported as a convergence failure rather than
-as a calibration result.
-
-Every density is drawn from the same seed, so the closures form a nested
-sequence -- each graph is the sparser one plus more closures -- and every
-condition sees the same odometry noise. The sweep then varies density and
-nothing else. At twenty poses every density on the axis is an exact number
-of closures (0, 1, 2, 4, 8, 16, 24).
-
-Run:  python experiments/e2_loop_closure_density.py [--runs N] [--figures-only]
-"""
+"""E2: calibration against loop-closure density."""
 
 from __future__ import annotations
 
@@ -60,7 +34,7 @@ SEED = 100
 
 
 def condition(lie, density: float, n_runs: int) -> dict:
-    """One density: Monte Carlo, then NEES against the band."""
+    """Run one density and summarise its calibration."""
     scenario = make_scenario(
         lie, n_poses=N_POSES, loop_density=density, seed=SEED, turn=TURN
     )
@@ -121,9 +95,7 @@ def report_console(rows) -> None:
             f"monotone {'yes' if falling else 'NO'}"
         )
 
-    # A null is only worth anything next to a statement of what it could have
-    # detected, so the interval widths are printed beside the spread they
-    # would have to resolve.
+    # Print the interval widths next to the spread they would need to resolve.
     widths = [r["ci_high"] - r["ci_low"] for r in rows if r["usable"]]
     spread = max(r["ratio"] for r in rows if r["usable"]) - min(
         r["ratio"] for r in rows if r["usable"]
@@ -142,11 +114,9 @@ def report_console(rows) -> None:
 
 
 def build_figure():
-    """F1: NEES against loop-closure density, with the acceptance band shaded."""
+    """NEES against loop-closure density."""
     rows = read_results("e2_density")
-    # Shared y: the panels show the same quantity and the reader compares them
-    # directly. SE(3) really is tighter -- twice the degrees of freedom -- and
-    # separate scales would hide that behind a rescale.
+    # Shared y, so the two groups compare directly.
     fig, axes = figure(nrows=1, ncols=2, size=(10.0, 4.2), sharey=True)
 
     for index, (name, _) in enumerate(GROUPS):
@@ -157,10 +127,7 @@ def build_figure():
         ratio = np.array([r["ratio"] for r in series])
         ci_low = np.array([r["ci_low"] for r in series])
         ci_high = np.array([r["ci_high"] for r in series])
-        # Densities are unevenly spaced and each is a separate experiment, so
-        # they are placed as ordered categories. On a linear axis the crowded
-        # low end turns differences of a few percent into a dramatic zigzag,
-        # and a connecting line would imply a trend the analysis says is absent.
+        # Densities are unevenly spaced, so plot them as ordered categories.
         x = np.arange(len(series))
 
         ax.axhspan(
@@ -190,8 +157,7 @@ def build_figure():
         ax.set_xticks(x)
         ax.set_xticklabels([f"{r['density']:g}" for r in series])
         ax.set_xlim(-0.5, len(series) - 0.5)
-        # linear, not log: the whole sweep stays within a few percent of 1,
-        # and a log scale would compress the only thing this figure shows
+        # linear: the whole sweep stays within a few percent of 1
         label(
             ax,
             f"{name} - calibration against constraint density",
@@ -199,9 +165,7 @@ def build_figure():
             "mean NEES / dof" if index == 0 else "",
         )
 
-    # One legend for the figure, not one per panel: both panels carry the same
-    # three series, and on a full-width line chart there is no in-panel corner
-    # that some mark does not pass through.
+    # One legend for both panels; they show the same series.
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(
         handles,
@@ -227,7 +191,7 @@ def figures() -> bool:
     try:
         path = save_figure(fig, "e2_loop_closure_density")
     except ImportError as exc:
-        print(f"figure built but not written -- no usable renderer ({exc})")
+        print(f"figure built but not written: no usable renderer ({exc})")
         return False
     print(f"figure written to {path}")
     return True

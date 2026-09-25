@@ -1,30 +1,4 @@
-"""Trajectory and noise simulation, and the Monte Carlo harness: parameterized
-trajectory generators with controllable loop-closure density, noise
-anisotropy and outlier rate, solved over many independent noise realizations
-to build the empirical sampling distribution of the estimate.
-
-This is why the study has to be simulated. The reported covariance claims to
-describe the distribution the estimate would take if the same measurements
-were collected again with fresh noise. On real data that distribution is
-unobservable -- there is one dataset and one answer, and no way to ask what
-else might have happened. Generating many noise realizations of the *same*
-measurement set makes it observable, and the spread of the resulting estimates
-is exactly the thing the covariance is a claim about.
-
-What is held fixed across runs matters as much as what varies. The trajectory,
-which poses are connected, and which of those connections are false are all
-part of the experimental condition and are drawn once. Only the measurement
-noise is redrawn. Resampling the graph structure each run would blur several
-effects together and the resulting spread would answer no clean question.
-
-The same discipline applies across the conditions of a sweep. Loop closures
-and outliers are chosen as prefixes of one fixed random ordering, so with the
-same seed a denser graph contains the sparser one and a higher outlier rate
-contains the lower one's false closures. Noise is drawn edge by edge in a
-fixed order, so the same Monte Carlo seed gives every condition the same
-draws on the edges they share. Neighbouring conditions then differ in the
-swept quantity, not in which graph happened to be sampled for them.
-"""
+"""Scenarios, measurement noise and the Monte Carlo harness."""
 
 from __future__ import annotations
 
@@ -42,25 +16,14 @@ from posetrust.stats import nees, tangent_error
 
 @dataclass(frozen=True)
 class NoiseModel:
-    """Zero-mean tangent-space noise with per-degree-of-freedom scales.
-
-    Anisotropy is deliberate and is one of the axes the study sweeps: odometry
-    is typically far more certain along the direction of travel than across
-    it, and rotational and translational uncertainty are not even in the same
-    units. A scalar noise level would quietly assume the problem away.
-    """
+    """Zero-mean tangent-space noise with per-DOF sigmas."""
 
     sigma: np.ndarray
 
     def __post_init__(self) -> None:
         sigma = np.asarray(self.sigma, dtype=float)
         if sigma.ndim != 1 or np.any(sigma <= 0.0):
-            raise ValueError(
-                "noise sigma must be a 1-D vector of strictly positive scales; "
-                "a zero scale means infinite information, which has no "
-                "information matrix. For effectively exact measurements use a "
-                "small sigma instead."
-            )
+            raise ValueError("noise sigma must be a 1-D vector of strictly positive values")
 
     @property
     def covariance(self) -> np.ndarray:
@@ -76,12 +39,7 @@ class NoiseModel:
 
 @dataclass
 class Scenario:
-    """One experimental condition: the structure that stays fixed across runs.
-
-    `outliers` maps each false closure (i, j) to the pose it wrongly claims
-    to have matched. That endpoint is part of the condition, like the choice
-    of which closures are false, so it is drawn once and not per run.
-    """
+    """Truth, edges and false closures for one condition."""
 
     truth: list[np.ndarray]
     edges: list[tuple[int, int]]
@@ -93,13 +51,7 @@ class Scenario:
 
 
 def _exact_count(value: float, what: str) -> int:
-    """`value` as a whole number, or an error if it is not one.
-
-    Rates and densities become counts, and rounding them silently is how a
-    sweep ends up with two labels on one condition: 0.05 and 0.1 closures per
-    pose on twelve poses are both one closure. Refusing is the only way to
-    keep a sweep's axis meaning what its labels say.
-    """
+    """value as an int, or ValueError if it isn't a whole number."""
     count = round(float(value))
     if abs(value - count) > 1e-9:
         raise ValueError(
@@ -112,12 +64,7 @@ def _exact_count(value: float, what: str) -> int:
 def curved_trajectory(
     lie, n_poses: int = 20, step: float = 1.0, turn: float = 0.2
 ) -> list[np.ndarray]:
-    """A chain that advances `step` and turns `turn` radians each pose.
-
-    Curvature is not decoration. On a straight line the rotation blocks stay
-    near identity, the problem is nearly linear, and the manifold effects the
-    study exists to measure would never appear.
-    """
+    """Poses that step forward and turn by a fixed angle each time."""
     increment = np.zeros(lie.DOF)
     increment[0] = step
     increment[lie.DOF - 1] = turn
@@ -128,7 +75,7 @@ def curved_trajectory(
 
 
 def odometry_edges(n_poses: int) -> list[tuple[int, int]]:
-    """Consecutive constraints -- the backbone every pose graph has."""
+    """Edges between consecutive poses."""
     return [(k, k + 1) for k in range(n_poses - 1)]
 
 
@@ -138,19 +85,7 @@ def loop_closure_edges(
     rng: np.random.Generator,
     min_separation: int = 3,
 ) -> list[tuple[int, int]]:
-    """Sample loop closures at `density` closures per pose.
-
-    density = 0 is the odometry-only regime an edge system spends most of its
-    time in, and is the sparse end of the E2 sweep. Pairs closer together than
-    `min_separation` are excluded because they duplicate odometry rather than
-    closing anything.
-
-    The closures are the first `density * n_poses` entries of one random
-    ordering of the candidates, and that ordering is drawn whatever the
-    density. From the same generator state a denser graph therefore contains
-    every closure of a sparser one, and the generator is left in the same
-    state either way.
-    """
+    """density * n_poses loop closures, taken from a random ordering."""
     candidates = [
         (i, j)
         for i in range(n_poses)
@@ -174,24 +109,7 @@ def make_scenario(
     seed: int = 0,
     turn: float = 0.2,
 ) -> Scenario:
-    """Draw one experimental condition: trajectory, connectivity, and which
-    closures are false.
-
-    Outliers are decided here, false endpoint included, so that the same
-    corrupted edges are reused across every Monte Carlo run, which is what
-    makes the aliasing condition a property of the condition rather than
-    noise on top of it.
-
-    The false endpoint is drawn away from both i and j deliberately. Picking
-    any pose at random would sometimes reproduce the true relative pose, so a
-    condition labelled "30% outliers" would quietly contain fewer, and E4's
-    headline axis would not mean what it says.
-
-    Every closure gets a false endpoint whether or not it ends up false, and
-    the false ones are a prefix of a fixed ordering. With the same seed,
-    raising the outlier rate adds false closures to the lower rate's set
-    without moving the ones already there.
-    """
+    """Build a scenario. For a fixed seed, closures and outliers are nested."""
     rng = np.random.default_rng(seed)
     truth = curved_trajectory(lie, n_poses, turn=turn)
     closures = loop_closure_edges(n_poses, loop_density, rng)
@@ -210,22 +128,7 @@ def make_scenario(
 def sample_graph(
     lie, scenario: Scenario, noise: NoiseModel, rng: np.random.Generator
 ) -> PoseGraph:
-    """One noise realization of the fixed measurement set.
-
-    A true measurement is the exact relative pose perturbed on the right,
-    Z = (Ti^-1 Tj) @ exp(eps) with eps ~ N(0, noise.covariance), which makes
-    the residual exactly -eps and so gives the information matrix its stated
-    meaning.
-
-    A false one keeps the observing pose and corrupts the endpoint: the graph
-    is told that pose i saw place b when it actually saw place j. That is the
-    shape of the real failure -- perceptual aliasing is a front end matching
-    the wrong place confidently, not a large random error -- and it is why the
-    constraint is self-consistent enough to fool a least-squares back end.
-
-    The only randomness here is one noise draw per edge, in edge order, so a
-    given generator state produces the same noise whichever edges are false.
-    """
+    """One noisy measurement set for the scenario."""
     graph = PoseGraph(lie)
     for T in scenario.truth:
         graph.add_pose(T)
@@ -241,7 +144,7 @@ def sample_graph(
 
 
 def dead_reckon(lie, graph: PoseGraph, n_poses: int) -> list[np.ndarray]:
-    """Chain the odometry measurements together: what a real system starts from."""
+    """Initial guess from chaining the odometry."""
     poses = [lie.exp(np.zeros(lie.DOF))]
     odometry = {(f.i, f.j): f.measurement for f in graph.factors}
     for k in range(n_poses - 1):
@@ -251,14 +154,7 @@ def dead_reckon(lie, graph: PoseGraph, n_poses: int) -> list[np.ndarray]:
 
 @dataclass
 class MonteCarloResult:
-    """Per-run errors and reported covariances -- the raw material for NEES.
-
-    Full state covariances are not retained: at a thousand poses each one is
-    larger than the whole rest of the run put together. The full-state NEES is
-    computed while the matrix is still in hand and only the scalar is kept,
-    alongside the per-pose marginals that the by-degree-of-freedom breakdown
-    and the ellipsoid coverage plots need.
-    """
+    """Per-run errors, marginals and full-state NEES."""
 
     errors: np.ndarray
     marginals: np.ndarray
@@ -273,7 +169,7 @@ class MonteCarloResult:
 
     @property
     def free_dof(self) -> int:
-        """Degrees of freedom of the full-state NEES, after the gauge is fixed."""
+        """DOF of the full-state NEES after gauge fixing."""
         return (self.errors.shape[1] - 1) * self.dof
 
     def pose_errors(self, k: int) -> np.ndarray:
@@ -293,34 +189,7 @@ def monte_carlo(
     solver=None,
     initialize: str = "truth",
 ) -> MonteCarloResult:
-    """Solve the same measurement set under `n_runs` independent noise draws.
-
-    The anchor is held at its true pose in every run. Without that the
-    estimates would each sit in their own arbitrary frame and the spread
-    across runs would be dominated by gauge freedom rather than by estimation
-    error -- the covariance would look enormous and the comparison would mean
-    nothing.
-
-    `solver` is any callable (graph, poses, anchor) -> Result, so the same
-    harness measures plain least squares, Levenberg-Marquardt, or any robust
-    back-end. E4 needs exactly that: the comparison it makes is between
-    estimators on identical noise draws, which only holds if nothing else
-    about the run changes with the estimator.
-
-    `initialize="truth"` starts each solve at the true trajectory. That is
-    deliberate: the question here is whether the covariance at the optimum is
-    honest, not whether the optimizer can find the optimum from far away.
-    Starting elsewhere would fold convergence failures into a calibration
-    measurement and make a bad result impossible to attribute. Use
-    "odometry" to fold that in on purpose, as the aliasing experiment does.
-
-    Run r's noise depends only on (seed, r), so conditions given the same
-    seed see identical draws on every edge they share -- a paired comparison.
-    Sweeps hold the seed fixed across their conditions for exactly that reason.
-
-    The loop is embarrassingly parallel; it is serial here because at the
-    graph sizes the study uses each solve is milliseconds.
-    """
+    """Solve the scenario under n_runs noise draws."""
     dof = lie.DOF
     n_poses = scenario.n_poses
     solver = solver or gauss_newton

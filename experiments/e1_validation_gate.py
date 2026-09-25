@@ -1,32 +1,4 @@
-"""E1 (week 1): linear-Gaussian pose chain. Laplace covariance must be exact
-to near machine precision; empirical NEES must sit inside the chi-squared
-band. Write and pass this before anything else.
-
-Everywhere else in this study the reported covariance is an approximation of
-unknown quality -- that is the thing being measured. Here it is not. On a
-linear-Gaussian problem the Laplace approximation is the exact posterior, so
-the right answer is known in advance and any disagreement is a defect in this
-code rather than a finding about SLAM.
-
-Two claims, both known-answer:
-
-  exactness   On a chain whose Jacobians are exactly -I / +I, the marginal of
-              pose k must be k * Omega^-1 and the relative covariance over m
-              steps must be m * Omega^-1. Variances add along a chain.
-
-  consistency Under small noise and gentle curvature the problem stays close
-              to linear, so the empirical spread of the estimates over many
-              noise draws must match the covariance the solver reported.
-
-The gate is deliberately run at a wider band than the analysis alpha fixed in
-HYPOTHESES.md. At alpha = 0.05 a correct implementation fails one condition in
-twenty by construction, and a gate that cries wolf gets ignored, which is
-worse than not having one. Detecting a real defect does not need the extra
-sensitivity: the failures this catches are order-of-magnitude, not marginal.
-
-Run:  python experiments/e1_validation_gate.py [--runs N] [--figures-only]
-Exits non-zero if any check fails.
-"""
+"""E1: validation gate on a linear-Gaussian pose chain."""
 
 from __future__ import annotations
 
@@ -61,7 +33,7 @@ CHAIN_LENGTH = 8
 
 
 def exactness(lie) -> dict:
-    """Marginals on an exactly linear-Gaussian chain against their closed form."""
+    """Marginals on a linear-Gaussian chain against their closed form."""
     dof = lie.DOF
     omega = np.diag(np.linspace(1.0, 4.0, dof))
     omega_inv = np.linalg.inv(omega)
@@ -102,7 +74,7 @@ def exactness(lie) -> dict:
 
 
 def consistency(lie, sigma: float, n_runs: int):
-    """Monte Carlo NEES against the chi-squared band, near the linear regime."""
+    """Monte Carlo NEES against the chi-squared band."""
     scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=1, turn=0.05)
     result = monte_carlo(
         lie, scenario, NoiseModel(np.full(lie.DOF, sigma)), n_runs=n_runs, seed=7
@@ -196,17 +168,12 @@ def report_console(exact_rows, nees_rows) -> bool:
 
 
 def figures() -> bool:
-    """Regenerate every figure from the stored results, in seconds.
-
-    Separated from the gate's verdict on purpose: whether a chart could be
-    rendered says nothing about whether the covariance is correct, so a
-    missing plotting backend must not be able to fail the science.
-    """
+    """Redraw the E1 figure from the stored results."""
     fig = build_figure()
     try:
         path = save_figure(fig, "e1_validation_gate")
     except ImportError as exc:
-        print(f"figure built but not written -- no usable renderer here ({exc})")
+        print(f"figure built but not written: no usable renderer here ({exc})")
         print("results are in results/; rerun with --figures-only to write it.")
         return False
     print(f"figure written to {path}")
@@ -214,7 +181,7 @@ def figures() -> bool:
 
 
 def build_figure():
-    """Assemble the E1 figure. No rendering, so this runs anywhere."""
+    """Assemble the E1 figure."""
     summaries = read_results("e1_nees")
     samples = read_results("e1_nees_samples")
 
@@ -267,8 +234,7 @@ def build_figure():
             "NEES",
             "density",
         )
-        # upper right is the only corner clear of both the bars and the curve
-        # in each panel; upper left put ~1400 px^2 of data under the legend
+        # upper right is the only corner clear of the data
         ax.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper right")
 
         # Right: do the credible ellipsoids cover what they claim to?

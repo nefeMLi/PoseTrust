@@ -1,24 +1,4 @@
-"""Robust back-ends for perceptual aliasing (E4): Huber, Cauchy, switchable
-constraints, and graduated non-convexity.
-
-A single false loop closure is a confident, self-consistent constraint that
-happens to be about the wrong place. Least squares has no defence against it:
-the quadratic cost rewards splitting the difference, so one bad edge drags the
-whole trajectory. Robust kernels replace the quadratic with something that
-grows more slowly, so a residual large enough to be implausible stops
-dominating.
-
-Every kernel here is expressed as a pair -- a cost rho(s) and the weight it
-induces, w(s) = d rho / ds, both as functions of the squared Mahalanobis
-residual s = r^T Omega r. Iteratively reweighted least squares then reuses the
-ordinary machinery unchanged, with Omega scaled by w at each relinearization.
-
-The consequence that matters for this project: those weights reach H, so the
-covariance a robust method reports describes a *reweighted* problem. Robust
-estimation is known to rescue the trajectory. Whether it also rescues the
-uncertainty is the question E4 exists to answer, and nothing in the derivation
-of these kernels promises that it does.
-"""
+"""Robust kernels, IRLS and graduated non-convexity."""
 
 from __future__ import annotations
 
@@ -33,19 +13,13 @@ from posetrust.optimize.optimizer import Result, solve_step
 
 
 def chi2_threshold(dof: int, quantile: float = 0.95) -> float:
-    """Squared-residual level a correct measurement exceeds only `1-quantile` of the time.
-
-    Kernel parameters should be set from this rather than guessed: under a
-    correct noise model s = r^T Omega r is chi-squared on the measurement's
-    degrees of freedom, so the scale at which a residual becomes suspicious is
-    a property of the problem, not a tuning knob.
-    """
+    """Chi-squared quantile for dof degrees of freedom."""
     return float(chi2.ppf(quantile, dof))
 
 
 @dataclass(frozen=True)
 class Trivial:
-    """Plain least squares. The baseline E4 compares everything against."""
+    """Plain least squares."""
 
     def weight(self, s: np.ndarray) -> np.ndarray:
         return np.ones_like(s)
@@ -56,9 +30,7 @@ class Trivial:
 
 @dataclass(frozen=True)
 class Huber:
-    """Quadratic near zero, linear beyond `delta` -- convex, so it cannot create
-    local minima, but it never fully rejects an outlier either.
-    """
+    """Huber kernel (convex)."""
 
     delta: float
 
@@ -73,9 +45,7 @@ class Huber:
 
 @dataclass(frozen=True)
 class Cauchy:
-    """Redescending: weight falls off as 1/s, so gross outliers are nearly
-    ignored. Non-convex, so the result depends on where the solve started.
-    """
+    """Cauchy kernel (redescending)."""
 
     c: float
 
@@ -88,15 +58,7 @@ class Cauchy:
 
 @dataclass(frozen=True)
 class SwitchableConstraints:
-    """Dynamic covariance scaling: the closed form of switchable constraints.
-
-    Switchable constraints attach a latent switch in [0, 1] to every loop
-    closure and optimize it jointly with the trajectory, under a prior that
-    pulls it towards 1. Minimising that objective over the switch has a
-    closed form, s_scale = min(1, 2*phi/(phi + s)), which gives the same
-    answer without enlarging the state -- so the extra variables are omitted
-    here rather than carried and immediately eliminated.
-    """
+    """Switchable constraints in closed form (dynamic covariance scaling)."""
 
     phi: float
 
@@ -113,12 +75,7 @@ class SwitchableConstraints:
 
 @dataclass(frozen=True)
 class GemanMcClure:
-    """Strongly redescending, bounded cost. The surrogate GNC anneals.
-
-    `mu` controls how non-convex it is: large mu is almost plain least
-    squares, mu = 1 is Geman-McClure proper. Graduated non-convexity walks
-    from one to the other.
-    """
+    """Geman-McClure kernel, with a scale mu for GNC."""
 
     c: float
     mu: float = 1.0
@@ -134,7 +91,7 @@ class GemanMcClure:
 
 
 def squared_residuals(graph: PoseGraph, poses: list[np.ndarray]) -> np.ndarray:
-    """s_i = r_i^T Omega_i r_i for every factor: chi-squared under a correct model."""
+    """r^T Omega r for every factor."""
     out = np.empty(len(graph.factors))
     for index, factor in enumerate(graph.factors):
         r = graph.residual(factor, poses)
@@ -143,12 +100,7 @@ def squared_residuals(graph: PoseGraph, poses: list[np.ndarray]) -> np.ndarray:
 
 
 def loop_closure_indices(graph: PoseGraph) -> np.ndarray:
-    """Factors that are not consecutive odometry.
-
-    Robust kernels are normally applied only to these: odometry comes from a
-    different sensing process and is not subject to place-recognition error,
-    so down-weighting it discards good information for nothing.
-    """
+    """Indices of the factors that are not odometry."""
     return np.array(
         [k for k, f in enumerate(graph.factors) if f.j != f.i + 1], dtype=int
     )
@@ -174,7 +126,7 @@ def factor_weights(
 
 
 def robust_cost(kernel, s: np.ndarray, mask: np.ndarray) -> float:
-    """Total objective: rho(s) where the kernel applies, s where it does not."""
+    """Total cost: rho(s) on robust factors, s elsewhere."""
     total = float(s[~mask].sum())
     if mask.any():
         total += float(np.sum(kernel.cost(s[mask])))
@@ -190,24 +142,7 @@ def irls(
     max_iterations: int = 500,
     tol: float = 1e-12,
 ) -> Result:
-    """Iteratively reweighted least squares with a fixed kernel.
-
-    Each iteration recomputes the weights from the current residuals, then
-    takes an ordinary Gauss-Newton step against the reweighted system. The
-    returned `information` is that reweighted H -- the covariance a robust
-    back-end would actually report, and the object E4 puts on trial.
-
-    `chi2` on the result is the robust objective, not the least-squares one;
-    the two are not comparable across kernels, which is why E4 compares
-    trajectory error and NEES instead.
-
-    The iteration budget is large on purpose. Reweighting converges linearly,
-    not quadratically like Gauss-Newton: with several false closures a convex
-    kernel can shrink the step by only ten percent an iteration and need a few
-    hundred to settle. A tight budget would record those runs as failures,
-    and the analysis would then drop them -- an artefact of the budget
-    reported as a property of the kernel.
-    """
+    """Iteratively reweighted least squares with a fixed kernel."""
     kernel = kernel or Trivial()
     poses = [np.array(T, dtype=float) for T in (poses or graph.poses)]
     free = free_mask(len(poses), graph.dof, anchor)
@@ -244,22 +179,7 @@ def graduated_non_convexity(
     max_iterations: int = 500,
     tol: float = 1e-12,
 ) -> Result:
-    """Anneal from a near-convex surrogate down to Geman-McClure.
-
-    The redescending kernels are non-convex, so a solve started from a
-    trajectory that outliers have already dragged out of shape can settle into
-    whichever bad minimum is nearest. Graduated non-convexity avoids choosing
-    a starting point at all: it begins with a surrogate so heavily smoothed
-    that it is effectively least squares, and sharpens it only as the estimate
-    improves, carrying the solution along the way.
-
-    mu starts at 2*max(s)/c^2, large enough that the surrogate is convex over
-    the residuals actually present, and is divided by `mu_factor` until it
-    reaches 1, taking `inner_iterations` reweighted steps at each level. At
-    mu = 1 the surrogate is Geman-McClure proper, and the final solve is
-    plain IRLS on it, so convergence is judged by the same rule and budget as
-    every other robust back-end.
-    """
+    """Graduated non-convexity down to Geman-McClure, finished by IRLS."""
     poses = [np.array(T, dtype=float) for T in (poses or graph.poses)]
     free = free_mask(len(poses), graph.dof, anchor)
     mask = _robust_mask(graph, robust_factors)
