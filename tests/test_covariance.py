@@ -1,13 +1,4 @@
-"""Tests for selected-inversion marginals and gauge invariance.
-
-Two properties carry most of the weight here. First, a closed-form known
-answer: on a degenerate chain every Jacobian is exactly -I / +I, so the
-problem is linear-Gaussian, the Laplace covariance is exact, and the marginal
-of pose k must come out as exactly k * Omega^-1. Second, gauge invariance:
-absolute marginals depend on the anchor and so are not meaningful on their
-own, but relative covariances must not -- if they shift with the anchor, gauge
-handling has corrupted them.
-"""
+"""Tests for covariances and gauge handling."""
 
 from __future__ import annotations
 
@@ -31,11 +22,7 @@ CHAIN_LENGTH = 8
 
 
 def identity_chain(lie, n: int = CHAIN_LENGTH, loop_closure: bool = False):
-    """All poses and measurements identity: the exactly-linear-Gaussian case.
-
-    Adj(I) == I and Jr^-1(0) == I, so H is the chain Laplacian tensored with
-    Omega and the covariance has a closed form to compare against.
-    """
+    """All poses and measurements identity."""
     dof = lie.DOF
     omega = np.diag(np.linspace(1.0, 4.0, dof))
     graph = PoseGraph(lie)
@@ -52,7 +39,6 @@ def identity_chain(lie, n: int = CHAIN_LENGTH, loop_closure: bool = False):
 
 @pytest.mark.parametrize("n", [1, 2, 3, 5, 9, 17, 40])
 def test_selected_inverse_matches_dense_inverse(n: int) -> None:
-    """Checked on random SPD matrices, independent of any pose-graph machinery."""
     rng = np.random.default_rng(n)
     for _ in range(10):
         A = rng.normal(size=(n, n))
@@ -70,12 +56,6 @@ def test_selected_inverse_is_symmetric() -> None:
 
 
 def test_chain_marginals_match_closed_form(lie) -> None:
-    """Sigma_k == k * Omega^-1 exactly: variances add along a chain.
-
-    This is the covariance half of the E1 validation gate. If it fails, the
-    Laplace covariance is not being recovered even where it is provably exact,
-    and every calibration result downstream would be measuring our own bug.
-    """
     _, H, omega = identity_chain(lie)
     marginals = marginal_covariances(H, anchor=0, dof=lie.DOF)
     omega_inv = np.linalg.inv(omega)
@@ -84,7 +64,6 @@ def test_chain_marginals_match_closed_form(lie) -> None:
 
 
 def test_chain_relative_covariance_matches_closed_form(lie) -> None:
-    """Relative uncertainty over m steps is m * Omega^-1, wherever it starts."""
     graph, H, omega = identity_chain(lie)
     omega_inv = np.linalg.inv(omega)
     for i, j in [(0, 1), (2, 6), (1, 7), (3, 4)]:
@@ -93,7 +72,6 @@ def test_chain_relative_covariance_matches_closed_form(lie) -> None:
 
 
 def test_anchored_pose_has_exactly_zero_covariance(lie) -> None:
-    """Exactly zero, not merely small -- the reason anchoring beats a stiff prior."""
     truth = short_trajectory(lie)
     graph = build_graph(lie, truth, noise=0.02, seed=2)
     result = gauss_newton(graph, truth, anchor=0)
@@ -120,11 +98,6 @@ def test_marginals_are_valid_covariances(lie) -> None:
 
 
 def test_relative_covariance_is_gauge_invariant(lie) -> None:
-    """The sharpest test that gauge handling has not corrupted the covariances.
-
-    Absolute marginals legitimately change with the anchor; relative ones
-    describe something the data actually determines, so they must not.
-    """
     truth = short_trajectory(lie)
     graph = build_graph(lie, truth, noise=0.02, seed=8)
 
@@ -139,7 +112,6 @@ def test_relative_covariance_is_gauge_invariant(lie) -> None:
 
 
 def test_loop_closure_reduces_uncertainty(lie) -> None:
-    """Adding information must never make a covariance larger."""
     _, H_open, _ = identity_chain(lie, loop_closure=False)
     _, H_closed, _ = identity_chain(lie, loop_closure=True)
     open_blocks = marginal_covariances(H_open, 0, lie.DOF)
@@ -153,12 +125,6 @@ def test_loop_closure_reduces_uncertainty(lie) -> None:
 
 
 def test_cross_covariance_is_not_ignored(lie) -> None:
-    """Relative uncertainty must be smaller than the naive sum of two marginals.
-
-    Errors shared through the anchor are common mode and cancel in the
-    difference. Dropping the cross-covariance block is a standard way to
-    report a relative covariance that is far too large.
-    """
     graph, H, _ = identity_chain(lie)
     dof = lie.DOF
     blocks = marginal_covariances(H, 0, dof)
@@ -171,7 +137,6 @@ def test_cross_covariance_is_not_ignored(lie) -> None:
 
 
 def test_unanchored_system_is_rejected(lie) -> None:
-    """A singular H must fail loudly rather than return a plausible covariance."""
     _, H, _ = identity_chain(lie)
     with pytest.raises(np.linalg.LinAlgError, match="gauge"):
         cholesky_factor(H)
