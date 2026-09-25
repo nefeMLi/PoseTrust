@@ -7,7 +7,10 @@ import sys
 from itertools import pairwise
 
 import numpy as np
-from _common import (
+
+import se2
+import se3
+from experiment_utils import (
     INK,
     INK_MUTED,
     OBSERVED,
@@ -21,11 +24,9 @@ from _common import (
     survivorship_warning,
     write_results,
 )
-
-from posetrust.lie import se2, se3
-from posetrust.optimize.optimizer import levenberg_marquardt
-from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
-from posetrust.stats import ConsistencyReport, nees_by_dof
+from optimizer import levenberg_marquardt
+from simulate import NoiseModel, make_scenario, monte_carlo
+from stats import ConsistencyReport, nees_by_dof
 
 GROUPS = [("SE(2)", se2), ("SE(3)", se3)]
 ROTATION_NOISE = [0.01, 0.03, 0.06, 0.10, 0.15, 0.22, 0.30, 0.45]

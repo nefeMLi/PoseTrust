@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from posetrust.optimize.gauge import free_mask
+from optimizer import free_mask
 
 
 def cholesky_factor(H: np.ndarray) -> np.ndarray:

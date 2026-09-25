@@ -7,7 +7,10 @@ import sys
 from itertools import pairwise
 
 import numpy as np
-from _common import (
+
+import se2
+import se3
+from experiment_utils import (
     BAND,
     INK,
     INK_MUTED,
@@ -21,9 +24,7 @@ from _common import (
     survivorship_warning,
     write_results,
 )
-
-from posetrust.lie import se2, se3
-from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
+from simulate import NoiseModel, make_scenario, monte_carlo
 
 GROUPS = [("SE(2)", se2), ("SE(3)", se3)]
 DENSITIES = [0.0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.2]

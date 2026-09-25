@@ -6,11 +6,19 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from posetrust.graph import PoseGraph
-from posetrust.optimize.gauge import free_mask
+from graph import PoseGraph
 
 # Relative chi2 change too small to tell apart from rounding.
 _CHI2_RESOLUTION = 1e-12
+
+
+def free_mask(n_poses: int, dof: int, anchor: int) -> np.ndarray:
+    """Boolean index over the stacked state with the anchored pose removed."""
+    if not 0 <= anchor < n_poses:
+        raise IndexError(f"anchor {anchor} outside [0, {n_poses})")
+    free = np.ones(n_poses * dof, dtype=bool)
+    free[anchor * dof : (anchor + 1) * dof] = False
+    return free
 
 
 @dataclass
