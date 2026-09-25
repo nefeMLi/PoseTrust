@@ -1,9 +1,4 @@
-"""Tests for NEES chi-squared behaviour and coverage-curve computation.
-
-Checked against synthetic Gaussian draws rather than against the pose graph:
-if e really is drawn from N(0, Sigma) then the answers are known exactly, so a
-failure here is unambiguously this module's fault and not the estimator's.
-"""
+"""Tests for NEES and coverage."""
 
 from __future__ import annotations
 
@@ -55,7 +50,6 @@ def test_nees_matches_explicit_quadratic_form():
 
 
 def test_exact_covariance_is_consistent(gaussian_sample):
-    """The central claim: honest Sigma puts mean NEES at the state dimension."""
     errors, sigma = gaussian_sample
     values = nees_series(errors, repeated(sigma))
     assert classify(values, DIM) == CONSISTENT
@@ -63,7 +57,6 @@ def test_exact_covariance_is_consistent(gaussian_sample):
 
 
 def test_nees_follows_chi_squared(gaussian_sample):
-    """Not just the mean -- the whole distribution must be chi-squared."""
     errors, sigma = gaussian_sample
     values = nees_series(errors, repeated(sigma))
     assert kstest(values, chi2(DIM).cdf).pvalue > 0.01
@@ -77,7 +70,6 @@ def test_inflated_covariance_reads_as_conservative(gaussian_sample):
 
 
 def test_deflated_covariance_reads_as_overconfident(gaussian_sample):
-    """The dangerous direction, and the one the study is hunting."""
     errors, sigma = gaussian_sample
     values = nees_series(errors, repeated(sigma / 2.0))
     assert classify(values, DIM) == OVERCONFIDENT
@@ -85,7 +77,6 @@ def test_deflated_covariance_reads_as_overconfident(gaussian_sample):
 
 
 def test_acceptance_band_narrows_with_more_runs():
-    """Why run counts matter: with too few runs nothing is detectable."""
     widths = [
         np.diff(mean_acceptance_interval(DIM, n))[0] for n in (50, 500, 5000)
     ]
@@ -125,7 +116,6 @@ def test_tangent_error_is_zero_for_identical_poses(lie):
 
 
 def test_tangent_error_recovers_a_known_perturbation(lie):
-    """log(estimate^-1 @ truth) must return exactly the applied perturbation."""
     rng = np.random.default_rng(5)
     estimate = lie.exp(rng.uniform(-1, 1, lie.DOF))
     delta = rng.uniform(-0.1, 0.1, lie.DOF)
@@ -135,7 +125,6 @@ def test_tangent_error_recovers_a_known_perturbation(lie):
 
 @pytest.mark.parametrize("lie_module", [se2, se3], ids=["se2", "se3"])
 def test_nees_by_dof_splits_into_chi_squared_parts(lie_module):
-    """Each sub-block is chi-squared on its own degrees of freedom."""
     dof = lie_module.DOF
     t = lie_module.TRANSLATION_DOF
     rng = np.random.default_rng(1)
