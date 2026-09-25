@@ -1,7 +1,7 @@
 [project]
 name = "posetrust"
 version = "0.1.0"
-description = "Add your description here"
+description = "Tests whether the covariance pose-graph SLAM reports is statistically consistent with its actual error."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

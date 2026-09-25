@@ -8,6 +8,8 @@ every marginal.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import numpy as np
 from conftest import build_graph, perturbed, short_trajectory
 
@@ -83,7 +85,7 @@ def test_factor_jacobians_converge_quadratically(lie) -> None:
     for h in (1e-2, 1e-3, 1e-4):
         Ni, Nj = numerical_factor_jacobians(graph, factor, poses, h=h)
         errs.append(max(np.max(np.abs(Ji - Ni)), np.max(np.abs(Jj - Nj))))
-    for coarse, fine in zip(errs, errs[1:]):
+    for coarse, fine in pairwise(errs):
         assert coarse / fine > 50.0, f"finite differences plateaued: {errs}"
 
 

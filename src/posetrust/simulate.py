@@ -16,10 +16,19 @@ which poses are connected, and which of those connections are false are all
 part of the experimental condition and are drawn once. Only the measurement
 noise is redrawn. Resampling the graph structure each run would blur several
 effects together and the resulting spread would answer no clean question.
+
+The same discipline applies across the conditions of a sweep. Loop closures
+and outliers are chosen as prefixes of one fixed random ordering, so with the
+same seed a denser graph contains the sparser one and a higher outlier rate
+contains the lower one's false closures. Noise is drawn edge by edge in a
+fixed order, so the same Monte Carlo seed gives every condition the same
+draws on the edges they share. Neighbouring conditions then differ in the
+swept quantity, not in which graph happened to be sampled for them.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -67,15 +76,37 @@ class NoiseModel:
 
 @dataclass
 class Scenario:
-    """One experimental condition: the structure that stays fixed across runs."""
+    """One experimental condition: the structure that stays fixed across runs.
+
+    `outliers` maps each false closure (i, j) to the pose it wrongly claims
+    to have matched. That endpoint is part of the condition, like the choice
+    of which closures are false, so it is drawn once and not per run.
+    """
 
     truth: list[np.ndarray]
     edges: list[tuple[int, int]]
-    outliers: frozenset[tuple[int, int]] = field(default_factory=frozenset)
+    outliers: Mapping[tuple[int, int], int] = field(default_factory=dict)
 
     @property
     def n_poses(self) -> int:
         return len(self.truth)
+
+
+def _exact_count(value: float, what: str) -> int:
+    """`value` as a whole number, or an error if it is not one.
+
+    Rates and densities become counts, and rounding them silently is how a
+    sweep ends up with two labels on one condition: 0.05 and 0.1 closures per
+    pose on twelve poses are both one closure. Refusing is the only way to
+    keep a sweep's axis meaning what its labels say.
+    """
+    count = round(float(value))
+    if abs(value - count) > 1e-9:
+        raise ValueError(
+            f"{what} is {value:g}, not a whole number; choose values that give "
+            "an exact count rather than letting it be rounded"
+        )
+    return count
 
 
 def curved_trajectory(
@@ -113,17 +144,26 @@ def loop_closure_edges(
     time in, and is the sparse end of the E2 sweep. Pairs closer together than
     `min_separation` are excluded because they duplicate odometry rather than
     closing anything.
+
+    The closures are the first `density * n_poses` entries of one random
+    ordering of the candidates, and that ordering is drawn whatever the
+    density. From the same generator state a denser graph therefore contains
+    every closure of a sparser one, and the generator is left in the same
+    state either way.
     """
     candidates = [
         (i, j)
         for i in range(n_poses)
         for j in range(i + min_separation, n_poses)
     ]
-    if not candidates:
-        return []
-    count = min(int(round(density * n_poses)), len(candidates))
-    chosen = rng.choice(len(candidates), size=count, replace=False)
-    return [candidates[k] for k in sorted(chosen)]
+    count = _exact_count(density * n_poses, "density * n_poses")
+    if count > len(candidates):
+        raise ValueError(
+            f"{count} loop closures requested but only {len(candidates)} pose "
+            f"pairs are at least {min_separation} apart"
+        )
+    order = rng.permutation(len(candidates))
+    return [candidates[k] for k in sorted(order[:count])]
 
 
 def make_scenario(
@@ -137,19 +177,34 @@ def make_scenario(
     """Draw one experimental condition: trajectory, connectivity, and which
     closures are false.
 
-    Outliers are marked here rather than generated here so that the same
+    Outliers are decided here, false endpoint included, so that the same
     corrupted edges are reused across every Monte Carlo run, which is what
     makes the aliasing condition a property of the condition rather than
     noise on top of it.
+
+    The false endpoint is drawn away from both i and j deliberately. Picking
+    any pose at random would sometimes reproduce the true relative pose, so a
+    condition labelled "30% outliers" would quietly contain fewer, and E4's
+    headline axis would not mean what it says.
+
+    Every closure gets a false endpoint whether or not it ends up false, and
+    the false ones are a prefix of a fixed ordering. With the same seed,
+    raising the outlier rate adds false closures to the lower rate's set
+    without moving the ones already there.
     """
     rng = np.random.default_rng(seed)
     truth = curved_trajectory(lie, n_poses, turn=turn)
     closures = loop_closure_edges(n_poses, loop_density, rng)
     edges = odometry_edges(n_poses) + closures
 
-    n_bad = int(round(outlier_rate * len(closures)))
-    bad = rng.choice(len(closures), size=n_bad, replace=False) if n_bad else []
-    return Scenario(truth, edges, frozenset(closures[k] for k in bad))
+    false_endpoint = [
+        int(rng.choice([b for b in range(n_poses) if b not in (i, j)]))
+        for i, j in closures
+    ]
+    n_bad = _exact_count(outlier_rate * len(closures), "outlier_rate * closures")
+    order = rng.permutation(len(closures))
+    outliers = {closures[k]: false_endpoint[k] for k in order[:n_bad]}
+    return Scenario(truth, edges, outliers)
 
 
 def sample_graph(
@@ -168,27 +223,18 @@ def sample_graph(
     the wrong place confidently, not a large random error -- and it is why the
     constraint is self-consistent enough to fool a least-squares back end.
 
-    The wrong endpoint is drawn away from j deliberately. Sampling an
-    unrelated pair at random would occasionally reproduce the true relative
-    pose, so a condition labelled "30% outliers" would quietly contain fewer,
-    and E4's headline axis would not mean what it says.
+    The only randomness here is one noise draw per edge, in edge order, so a
+    given generator state produces the same noise whichever edges are false.
     """
     graph = PoseGraph(lie)
     for T in scenario.truth:
         graph.add_pose(T)
 
-    n = scenario.n_poses
     for i, j in scenario.edges:
-        if (i, j) in scenario.outliers:
-            wrong = [b for b in range(n) if b not in (i, j)]
-            b = int(rng.choice(wrong))
-            relative = lie.compose(
-                lie.inverse(scenario.truth[i]), scenario.truth[b]
-            )
-        else:
-            relative = lie.compose(
-                lie.inverse(scenario.truth[i]), scenario.truth[j]
-            )
+        observed = scenario.outliers.get((i, j), j)
+        relative = lie.compose(
+            lie.inverse(scenario.truth[i]), scenario.truth[observed]
+        )
         measurement = lie.compose(relative, lie.exp(noise.sample(rng)))
         graph.add_factor(i, j, measurement, noise.information)
     return graph
@@ -267,6 +313,10 @@ def monte_carlo(
     Starting elsewhere would fold convergence failures into a calibration
     measurement and make a bad result impossible to attribute. Use
     "odometry" to fold that in on purpose, as the aliasing experiment does.
+
+    Run r's noise depends only on (seed, r), so conditions given the same
+    seed see identical draws on every edge they share -- a paired comparison.
+    Sweeps hold the seed fixed across their conditions for exactly that reason.
 
     The loop is embarrassingly parallel; it is serial here because at the
     graph sizes the study uses each solve is milliseconds.

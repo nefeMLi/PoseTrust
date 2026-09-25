@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from posetrust.optimize.optimizer import levenberg_marquardt
 from posetrust.simulate import (
     NoiseModel,
     curved_trajectory,
@@ -23,7 +24,6 @@ from posetrust.simulate import (
     odometry_edges,
     sample_graph,
 )
-from posetrust.optimize.optimizer import levenberg_marquardt
 from posetrust.stats import CONSISTENT, ConsistencyReport, classify
 
 N_POSES = 6
@@ -60,9 +60,31 @@ def test_odometry_edges_form_a_chain():
 def test_loop_closure_density_controls_edge_count(density):
     rng = np.random.default_rng(0)
     edges = loop_closure_edges(20, density, rng)
-    assert len(edges) == int(round(density * 20))
+    assert len(edges) == round(density * 20)
+    assert len(set(edges)) == len(edges)
     for i, j in edges:
         assert j - i >= 3, "closures must not duplicate odometry"
+
+
+@pytest.mark.parametrize("n_poses,density", [(12, 0.05), (12, 0.1), (12, 0.8)])
+def test_density_that_is_not_a_whole_count_is_refused(n_poses, density):
+    """Rounding here once gave 0.05 and 0.1 the same single closure."""
+    with pytest.raises(ValueError, match="not a whole number"):
+        loop_closure_edges(n_poses, density, np.random.default_rng(0))
+
+
+def test_more_closures_than_candidate_pairs_is_refused():
+    with pytest.raises(ValueError, match="pose pairs"):
+        loop_closure_edges(5, 1.0, np.random.default_rng(0))
+
+
+def test_denser_graphs_contain_sparser_ones():
+    """Same seed, more closures: the sweep adds edges rather than resampling."""
+    previous: set = set()
+    for density in [0.0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.2]:
+        edges = set(loop_closure_edges(20, density, np.random.default_rng(9)))
+        assert previous <= edges
+        previous = edges
 
 
 def test_zero_density_is_odometry_only(lie):
@@ -73,8 +95,48 @@ def test_zero_density_is_odometry_only(lie):
 def test_outlier_rate_marks_the_right_number_of_closures(lie):
     scenario = make_scenario(lie, n_poses=30, loop_density=1.0, outlier_rate=0.3, seed=0)
     closures = [e for e in scenario.edges if e not in odometry_edges(30)]
-    assert len(scenario.outliers) == int(round(0.3 * len(closures)))
-    assert scenario.outliers <= set(closures), "odometry must never be corrupted"
+    assert len(scenario.outliers) == 9
+    assert set(scenario.outliers) <= set(closures), "odometry must never be corrupted"
+    for (i, j), b in scenario.outliers.items():
+        assert b not in (i, j), "a false closure must claim a different place"
+
+
+def test_outlier_rate_that_is_not_a_whole_count_is_refused(lie):
+    """Ten closures at 5% was silently zero outliers: a clean run labelled corrupt."""
+    with pytest.raises(ValueError, match="not a whole number"):
+        make_scenario(lie, n_poses=10, loop_density=1.0, outlier_rate=0.05, seed=0)
+
+
+def test_higher_outlier_rates_add_to_the_lower_rates_outliers(lie):
+    """Same seed: raising the rate adds false closures, keeping earlier ones
+    and the places they claim. Otherwise neighbouring rates differ in which
+    closures are false as well as how many."""
+    previous: dict = {}
+    for rate in [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]:
+        scenario = make_scenario(
+            lie, n_poses=20, loop_density=1.0, outlier_rate=rate, seed=3
+        )
+        assert len(scenario.outliers) == round(rate * 20)
+        assert previous.items() <= scenario.outliers.items()
+        previous = dict(scenario.outliers)
+
+
+def test_noise_is_common_across_outlier_rates(lie):
+    """The same generator state gives every true edge the same measurement
+    whatever else is false, so conditions can be compared run by run."""
+    noise = NoiseModel(np.full(lie.DOF, 0.02))
+    graphs = []
+    for rate in (0.0, 0.3):
+        scenario = make_scenario(
+            lie, n_poses=20, loop_density=1.0, outlier_rate=rate, seed=3
+        )
+        graphs.append(
+            (scenario, sample_graph(lie, scenario, noise, np.random.default_rng(1)))
+        )
+    (_, clean), (corrupt_scenario, corrupt) = graphs
+    for a, b in zip(clean.factors, corrupt.factors):
+        if (a.i, a.j) not in corrupt_scenario.outliers:
+            np.testing.assert_array_equal(a.measurement, b.measurement)
 
 
 def test_measurement_is_the_true_relative_pose_perturbed_by_the_noise(lie):
@@ -175,7 +237,7 @@ def test_near_linear_gaussian_is_consistent(lie):
     all. Anything other than a consistent verdict here means a defect
     somewhere in the stack, not a finding about SLAM.
     """
-    scenario = make_scenario(lie, n_poses=N_POSES, loop_density=0.3, seed=1, turn=0.05)
+    scenario = make_scenario(lie, n_poses=N_POSES, loop_density=0.5, seed=1, turn=0.05)
     noise = NoiseModel(np.full(lie.DOF, 1e-3))
     result = monte_carlo(lie, scenario, noise, n_runs=N_RUNS, seed=7)
 
@@ -196,26 +258,28 @@ def test_large_rotational_noise_becomes_overconfident():
     """
     from posetrust.lie import se2
 
-    scenario = make_scenario(se2, n_poses=8, loop_density=0.3, seed=1, turn=0.3)
+    scenario = make_scenario(se2, n_poses=8, loop_density=0.25, seed=1, turn=0.3)
     result = monte_carlo(
         se2, scenario, NoiseModel(np.array([0.02, 0.02, 0.5])),
         n_runs=60, seed=11, solver=levenberg_marquardt,
     )
 
-    # Restricting to converged runs is not bookkeeping. At this noise level a
-    # minority of runs fail to converge, and pooling them with the rest
-    # inflates the ratio -- an early sweep reported 88.7 that way when the
-    # converged-only figure was 68.5. The finding survives; the number did not.
-    ok = result.converged
-    assert ok.sum() >= 40, "too few converged runs to say anything"
-    values = result.nees_full[ok]
+    # Every run converges. That was not always so: under a cruder damping rule
+    # and a hundred-iteration budget a minority stopped short, and excluding
+    # them -- which the analysis must do -- silently dropped the hardest
+    # draws. Pinned so that a regression in the solver is noticed here.
+    assert result.converged.all()
+    values = result.nees_full
     assert classify(values, result.free_dof) != CONSISTENT
     assert values.mean() / result.free_dof > 2.0
 
 
-def test_loop_closures_are_empty_when_no_pair_is_far_enough_apart():
-    """A three-pose graph has nothing to close; min_separation excludes it all."""
-    assert loop_closure_edges(3, density=1.0, rng=np.random.default_rng(0)) == []
+def test_a_graph_too_short_to_close_accepts_only_zero_closures():
+    """A three-pose graph has nothing to close; min_separation excludes it all.
+    Asking for none is fine; asking for some must not quietly return none."""
+    assert loop_closure_edges(3, density=0.0, rng=np.random.default_rng(0)) == []
+    with pytest.raises(ValueError, match="pose pairs"):
+        loop_closure_edges(3, density=1.0, rng=np.random.default_rng(0))
 
 
 def test_result_accessors_expose_per_pose_slices(lie):

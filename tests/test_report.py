@@ -20,14 +20,14 @@ from posetrust.stats import CONSISTENT, ConsistencyReport
 N_RUNS = 150
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _calibrated_run(lie):
     """A near-linear-Gaussian condition, where the covariance is exact.
 
     Cached: the same 150-run sweep backs every test in this file, and it is
     the slowest thing in the suite by a wide margin.
     """
-    scenario = make_scenario(lie, n_poses=6, loop_density=0.3, seed=1, turn=0.05)
+    scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=1, turn=0.05)
     return monte_carlo(
         lie, scenario, NoiseModel(np.full(lie.DOF, 1e-3)), n_runs=N_RUNS, seed=7
     )
