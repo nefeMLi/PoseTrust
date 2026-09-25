@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from graph import PoseGraph
+from posetrust.graph import PoseGraph
 
 # Relative chi2 change too small to tell apart from rounding.
 _CHI2_RESOLUTION = 1e-12

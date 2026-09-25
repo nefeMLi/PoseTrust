@@ -4,18 +4,17 @@ import numpy as np
 import pytest
 from scipy.linalg import expm
 
-import se2
-import se3
-from covariance import cholesky_factor, selected_inverse
-from optimizer import gauss_newton, levenberg_marquardt
-from simulate import (
+from posetrust import se2, se3
+from posetrust.covariance import cholesky_factor, selected_inverse
+from posetrust.optimizer import gauss_newton, levenberg_marquardt
+from posetrust.simulate import (
     NoiseModel,
     loop_closure_edges,
     make_scenario,
     monte_carlo,
     sample_graph,
 )
-from stats import CONSISTENT, consistency
+from posetrust.stats import CONSISTENT, consistency
 
 groups = pytest.mark.parametrize("lie", [se2, se3], ids=["SE2", "SE3"])
 

@@ -10,7 +10,7 @@ from scipy.linalg import cho_factor, cho_solve
 from scipy.stats import chi2
 
 if TYPE_CHECKING:
-    from simulate import MonteCarloResult
+    from posetrust.simulate import MonteCarloResult
 
 CONSISTENT = "consistent"
 CONSERVATIVE = "conservative"

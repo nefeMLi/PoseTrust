@@ -10,9 +10,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from matplotlib.figure import Figure
 
-from stats import ConsistencyReport, benjamini_hochberg
+from posetrust.stats import ConsistencyReport, benjamini_hochberg
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
 FIGURES_DIR = ROOT / "figures"
 

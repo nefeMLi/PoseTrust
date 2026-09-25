@@ -8,10 +8,7 @@ import sys
 import numpy as np
 from scipy.stats import chi2
 
-import se2
-import se3
-from covariance import marginal_covariances, relative_covariance
-from experiment_utils import (
+from experiments.common import (
     INK,
     INK_MUTED,
     OBSERVED,
@@ -21,9 +18,11 @@ from experiment_utils import (
     save_figure,
     write_results,
 )
-from graph import PoseGraph
-from simulate import NoiseModel, make_scenario, monte_carlo
-from stats import ConsistencyReport
+from posetrust import se2, se3
+from posetrust.covariance import marginal_covariances, relative_covariance
+from posetrust.graph import PoseGraph
+from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
+from posetrust.stats import ConsistencyReport
 
 GROUPS = [("SE(2)", se2), ("SE(3)", se3)]
 NOISE_LEVELS = [1e-4, 1e-3, 1e-2]
