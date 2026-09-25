@@ -1,10 +1,4 @@
-"""Tests for the robust back-ends.
-
-The load-bearing property is that each kernel's weight really is the
-derivative of its cost. IRLS assumes that relation; if it does not hold the
-solver is descending on one objective while reporting another, and it can
-still look like it converges.
-"""
+"""Tests for the robust kernels and back-ends."""
 
 from __future__ import annotations
 
@@ -43,7 +37,6 @@ KERNEL_IDS = ["trivial", "huber", "cauchy", "switchable", "gm_mu1", "gm_mu7"]
 
 @pytest.mark.parametrize("kernel", KERNELS, ids=KERNEL_IDS)
 def test_weight_is_the_derivative_of_cost(kernel):
-    """w(s) == d rho/ds, which is the assumption IRLS is built on."""
     s = np.logspace(-6, 3, 2000)
     h = s * 1e-6
     numeric = (kernel.cost(s + h) - kernel.cost(s - h)) / (2 * h)
@@ -53,13 +46,6 @@ def test_weight_is_the_derivative_of_cost(kernel):
 
 @pytest.mark.parametrize("kernel", KERNELS, ids=KERNEL_IDS)
 def test_zero_residual_has_full_weight(kernel):
-    """w(0) == 1: every kernel agrees with least squares at the origin.
-
-    That is all it shows. A real inlier's residual is not zero, and at
-    typical chi-squared residuals the redescending kernels do down-weight
-    good constraints -- which inflates the covariance they report. E4 has to
-    be read with that in mind; this test does not rule it out.
-    """
     assert kernel.weight(np.array([0.0]))[0] == pytest.approx(1.0)
 
 
@@ -80,7 +66,6 @@ def test_piecewise_kernels_are_continuous(kernel, join):
 
 
 def test_redescending_kernels_have_bounded_cost():
-    """A gross outlier must stop mattering, not merely matter less."""
     huge = np.array([1e12])
     assert Cauchy(2.0).weight(huge)[0] < 1e-11
     assert SwitchableConstraints(3.0).weight(huge)[0] < 1e-11
@@ -108,7 +93,6 @@ def test_loop_closure_indices_exclude_odometry(lie):
 
 
 def test_trivial_kernel_reproduces_plain_least_squares(outlier_free_graph):
-    """IRLS with a flat weight must land exactly where Gauss-Newton does."""
     graph, _, start = outlier_free_graph
     plain = gauss_newton(graph, start, anchor=0)
     reweighted = irls(graph, start, Trivial(), anchor=0)
@@ -118,12 +102,6 @@ def test_trivial_kernel_reproduces_plain_least_squares(outlier_free_graph):
 
 
 def test_weights_reach_the_information_matrix(outlier_free_graph):
-    """Down-weighting must change H, not just the estimate.
-
-    This is the hinge of E4: the covariance a robust back-end reports is built
-    from the reweighted information, so if weighting never reached H there
-    would be nothing to interrogate.
-    """
     graph, truth, _ = outlier_free_graph
     weights = np.full(len(graph.factors), 0.25)
     H_plain, _ = graph.linearize(truth)
@@ -139,7 +117,6 @@ def test_robust_cost_leaves_unmasked_factors_quadratic(outlier_free_graph):
 
 
 def test_masked_factors_keep_unit_weight(outlier_free_graph):
-    """Odometry must not be down-weighted when only closures are robustified."""
     graph, _, _ = outlier_free_graph
     s = np.full(len(graph.factors), 1e6)
     mask = np.zeros(len(graph.factors), dtype=bool)
@@ -178,7 +155,6 @@ def rms_error(lie, poses, truth):
 
 
 def test_redescending_kernels_survive_outliers_and_plain_least_squares_does_not(lie):
-    """The behaviour the whole module exists for."""
     scenario, graph, start = outlier_scenario(lie)
     closures = loop_closure_indices(graph)
     threshold = chi2_threshold(lie.DOF, 0.95)
@@ -205,7 +181,6 @@ def test_redescending_kernels_survive_outliers_and_plain_least_squares_does_not(
 
 
 def test_graduated_non_convexity_identifies_the_planted_outliers(lie):
-    """GNC should drive false closures to essentially zero weight."""
     scenario, graph, start = outlier_scenario(lie)
     closures = loop_closure_indices(graph)
     delta = np.sqrt(chi2_threshold(lie.DOF, 0.95))
@@ -223,7 +198,6 @@ def test_graduated_non_convexity_identifies_the_planted_outliers(lie):
 
 
 def test_robustness_costs_nothing_when_there_are_no_outliers(lie):
-    """A robust back-end must not degrade the clean case."""
     scenario, graph, start = outlier_scenario(lie, rate=0.0)
     closures = loop_closure_indices(graph)
     delta = np.sqrt(chi2_threshold(lie.DOF, 0.95))
@@ -236,18 +210,6 @@ def test_robustness_costs_nothing_when_there_are_no_outliers(lie):
 
 
 def test_huber_restores_accuracy_without_restoring_calibration():
-    """E4's prize result, pinned: the dangerous quadrant is real.
-
-    Huber is convex, so it down-weights a false closure but never rejects it.
-    The surviving weight still enters H, so the trajectory is pulled back by
-    the majority of good constraints while the information matrix stays
-    inflated -- accuracy recovers, the covariance does not. Any evaluation
-    that scored only trajectory error would call this a success.
-
-    Redescending kernels drive the bad weight to zero and recover both.
-    One trajectory and one seed: this pins the behaviour so a change cannot
-    silently flatten it, and is not itself the experiment.
-    """
     from posetrust.lie import se2
     from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
     from posetrust.stats import CONSISTENT, ConsistencyReport
@@ -283,13 +245,6 @@ def test_huber_restores_accuracy_without_restoring_calibration():
 
 
 def test_slow_reweighting_is_not_recorded_as_failure(lie):
-    """Huber against six false closures in twenty settles, but slowly.
-
-    IRLS converges linearly, and here it needs about two hundred iterations.
-    A budget of fifty once reported every such run as non-converged, so E4
-    dropped them and called the condition a convergence failure: a property
-    of the budget, reported as one of the kernel.
-    """
     from posetrust.simulate import NoiseModel, dead_reckon, make_scenario, sample_graph
 
     scenario = make_scenario(
