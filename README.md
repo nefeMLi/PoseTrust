@@ -62,11 +62,13 @@ pip install -r requirements.txt
 
 ## Running the experiments
 
+From the project folder:
+
 ```sh
-python e1_validation_gate.py
-python e2_loop_closure_density.py
-python e3_nonlinearity.py
-python e4_perceptual_aliasing.py
+python -m experiments.e1_validation_gate
+python -m experiments.e2_loop_closure_density
+python -m experiments.e3_nonlinearity
+python -m experiments.e4_perceptual_aliasing
 ```
 
 Each script writes its results to `results/` and its figure to `figures/`.
@@ -78,28 +80,31 @@ The core checks run with `pytest tests.py`.
 
 ## Overview of the code
 
-- `se2.py`, `se3.py`: the Lie groups (exp, log, adjoint, right Jacobian).
-- `graph.py`: the pose graph, residuals and analytic Jacobians.
-- `optimizer.py`: Gauss-Newton and Levenberg-Marquardt, with gauge fixing by
-  anchoring one pose.
-- `robust.py`: Huber, Cauchy, switchable constraints, IRLS and graduated
-  non-convexity.
-- `covariance.py`: marginal and relative covariances by selected inversion.
-- `simulate.py`: scenarios, measurement noise and the Monte Carlo harness.
-- `stats.py`: NEES, chi-squared tests, coverage, and `consistency()`.
-- `experiment_utils.py`: the shared analysis rules, results I/O and figure
-  style.
-- `e1_*.py` to `e4_*.py`: one script per experiment.
+```
+posetrust/         the SLAM back-end and the statistics
+  se2.py, se3.py     the Lie groups (exp, log, adjoint, right Jacobian)
+  graph.py           the pose graph, residuals and analytic Jacobians
+  optimizer.py       Gauss-Newton and Levenberg-Marquardt, gauge fixing
+  robust.py          Huber, Cauchy, switchable constraints, IRLS, GNC
+  covariance.py      marginal and relative covariances by selected inversion
+  simulate.py        scenarios, measurement noise, the Monte Carlo harness
+  stats.py           NEES, chi-squared tests, coverage, consistency()
+experiments/       one script per experiment, plus common.py for the shared
+                   analysis rules, results I/O and figure style
+results/           the saved results of each experiment
+figures/           the figures, redrawn from results/
+tests.py           core checks on the maths
+```
 
 To check a solver's covariance directly:
 
 ```python
 import numpy as np
 
-import se2
-from optimizer import levenberg_marquardt
-from simulate import NoiseModel, make_scenario, monte_carlo
-from stats import consistency
+from posetrust import se2
+from posetrust.optimizer import levenberg_marquardt
+from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
+from posetrust.stats import consistency
 
 scenario = make_scenario(se2, n_poses=10, loop_density=0.3, seed=0)
 noise = NoiseModel(np.array([0.02, 0.02, 0.15]))  # x, y, heading
