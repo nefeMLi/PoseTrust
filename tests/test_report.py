@@ -1,8 +1,4 @@
-"""Tests for the public consistency() API.
-
-Thin by design: everything here composes stats.py, so these check the wiring
-and the guard rails rather than re-testing the statistics.
-"""
+"""Tests for the consistency() report."""
 
 from __future__ import annotations
 
@@ -22,11 +18,7 @@ N_RUNS = 150
 
 @functools.cache
 def _calibrated_run(lie):
-    """A near-linear-Gaussian condition, where the covariance is exact.
-
-    Cached: the same 150-run sweep backs every test in this file, and it is
-    the slowest thing in the suite by a wide margin.
-    """
+    """Cached near-linear run shared by these tests."""
     scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=1, turn=0.05)
     return monte_carlo(
         lie, scenario, NoiseModel(np.full(lie.DOF, 1e-3)), n_runs=N_RUNS, seed=7
@@ -34,13 +26,12 @@ def _calibrated_run(lie):
 
 
 def calibrated_run(lie):
-    """A fresh copy, so a test that mutates `converged` cannot poison the cache."""
+    """Fresh copy of the cached run."""
     cached = _calibrated_run(lie)
     return dataclasses.replace(cached, converged=cached.converged.copy())
 
 
 def test_consistency_is_exposed_at_package_level():
-    """The spec's deliverable is posetrust.consistency(...), not a deep import."""
     assert posetrust.consistency is consistency
 
 
@@ -69,7 +60,6 @@ def test_by_dof_splits_translation_from_rotation(lie):
 
 
 def test_by_dof_for_a_single_pose_is_a_valid_sample(lie):
-    """One sample per run, so the band genuinely applies at this granularity."""
     result = calibrated_run(lie)
     split = consistency(result, lie).by_dof(pose=4)
     assert split["translation"].values.size == result.n_runs
@@ -88,11 +78,6 @@ def test_summary_is_one_readable_line(lie):
 
 
 def test_non_converged_runs_are_refused(lie):
-    """Averaging converged and diverged solutions is not a calibration result.
-
-    Discovered the hard way: an early sweep reported a confident
-    overconfidence ratio that turned out to pool 27 non-converged runs.
-    """
     result = calibrated_run(lie)
     result.converged[3] = False
     with pytest.raises(ValueError, match="did not converge"):
@@ -100,7 +85,6 @@ def test_non_converged_runs_are_refused(lie):
 
 
 def test_report_can_be_constructed_directly_for_partial_data(lie):
-    """The guard lives in consistency(); Report itself stays usable for triage."""
     result = calibrated_run(lie)
     result.converged[0] = False
     report = Report(result, lie)
