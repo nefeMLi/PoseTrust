@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from covariance import covariance_matrix
-from graph import PoseGraph
-from optimizer import free_mask, gauss_newton
-from stats import nees, tangent_error
+from posetrust.covariance import covariance_matrix
+from posetrust.graph import PoseGraph
+from posetrust.optimizer import free_mask, gauss_newton
+from posetrust.stats import nees, tangent_error
 
 
 @dataclass(frozen=True)

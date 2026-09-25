@@ -8,8 +8,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
-import se2
-from experiment_utils import (
+from experiments.common import (
     BAND,
     INK,
     INK_MUTED,
@@ -23,8 +22,9 @@ from experiment_utils import (
     survivorship_warning,
     write_results,
 )
-from optimizer import gauss_newton
-from robust import (
+from posetrust import se2
+from posetrust.optimizer import gauss_newton
+from posetrust.robust import (
     Cauchy,
     Huber,
     SwitchableConstraints,
@@ -33,7 +33,7 @@ from robust import (
     irls,
     loop_closure_indices,
 )
-from simulate import NoiseModel, make_scenario, monte_carlo
+from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
 
 LIE = se2
 OUTLIER_RATES = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]

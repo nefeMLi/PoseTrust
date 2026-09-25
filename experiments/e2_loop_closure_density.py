@@ -8,9 +8,7 @@ from itertools import pairwise
 
 import numpy as np
 
-import se2
-import se3
-from experiment_utils import (
+from experiments.common import (
     BAND,
     INK,
     INK_MUTED,
@@ -24,7 +22,8 @@ from experiment_utils import (
     survivorship_warning,
     write_results,
 )
-from simulate import NoiseModel, make_scenario, monte_carlo
+from posetrust import se2, se3
+from posetrust.simulate import NoiseModel, make_scenario, monte_carlo
 
 GROUPS = [("SE(2)", se2), ("SE(3)", se3)]
 DENSITIES = [0.0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.2]

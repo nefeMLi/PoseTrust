@@ -7,8 +7,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.stats import chi2
 
-from graph import PoseGraph
-from optimizer import Result, free_mask, solve_step
+from posetrust.graph import PoseGraph
+from posetrust.optimizer import Result, free_mask, solve_step
 
 
 def chi2_threshold(dof: int, quantile: float = 0.95) -> float:
