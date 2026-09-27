@@ -176,7 +176,7 @@ scenario = make_scenario(se2, n_poses=10, loop_density=0.3, seed=0)
 noise = NoiseModel(np.array([0.02, 0.02, 0.15]))  # x, y, heading
 result = monte_carlo(se2, scenario, noise, n_runs=200, solver=levenberg_marquardt)
 
-print(consistency(result, se2).summary())
+print(consistency(result).summary())
 # consistent     mean NEES    27.979 (dof 27, band [25.99, 28.03], p=0.0617, 200 runs)
 ```
 

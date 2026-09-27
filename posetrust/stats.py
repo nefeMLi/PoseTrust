@@ -35,50 +35,6 @@ def nees_series(errors: np.ndarray, covariances: np.ndarray) -> np.ndarray:
     )
 
 
-def mean_acceptance_interval(
-    dof: int, n_runs: int, alpha: float = 0.05
-) -> tuple[float, float]:
-    """Interval the mean NEES should fall in if Sigma is honest."""
-    lo = chi2.ppf(alpha / 2.0, n_runs * dof) / n_runs
-    hi = chi2.ppf(1.0 - alpha / 2.0, n_runs * dof) / n_runs
-    return float(lo), float(hi)
-
-
-def classify(values: np.ndarray, dof: int, alpha: float = 0.05) -> str:
-    """consistent, conservative or OVERCONFIDENT."""
-    values = np.asarray(values, dtype=float)
-    lo, hi = mean_acceptance_interval(dof, values.size, alpha)
-    mean = float(values.mean())
-    if mean > hi:
-        return OVERCONFIDENT
-    if mean < lo:
-        return CONSERVATIVE
-    return CONSISTENT
-
-
-def mean_pvalue(values: np.ndarray, dof: int) -> float:
-    """Two-sided p-value for the mean NEES."""
-    values = np.asarray(values, dtype=float)
-    total = values.sum()
-    df = values.size * dof
-    lower = chi2.cdf(total, df)
-    return float(2.0 * min(lower, 1.0 - lower))
-
-
-def coverage_curve(
-    values: np.ndarray,
-    dof: int,
-    levels: tuple[float, ...] = (0.5, 0.9, 0.95, 0.99),
-) -> tuple[np.ndarray, np.ndarray]:
-    """Empirical against nominal ellipsoid coverage."""
-    values = np.asarray(values, dtype=float)
-    nominal = np.asarray(levels, dtype=float)
-    empirical = np.array(
-        [float(np.mean(values <= chi2.ppf(p, dof))) for p in nominal]
-    )
-    return nominal, empirical
-
-
 def nees_by_dof(
     lie, errors: np.ndarray, covariances: np.ndarray
 ) -> dict[str, np.ndarray]:
@@ -121,20 +77,36 @@ class ConsistencyReport:
 
     @property
     def acceptance(self) -> tuple[float, float]:
-        return mean_acceptance_interval(self.dof, self.values.size, self.alpha)
+        """Interval the mean NEES should fall in if Sigma is honest."""
+        n = self.values.size
+        lo = chi2.ppf(self.alpha / 2.0, n * self.dof) / n
+        hi = chi2.ppf(1.0 - self.alpha / 2.0, n * self.dof) / n
+        return float(lo), float(hi)
 
     @property
     def verdict(self) -> str:
-        return classify(self.values, self.dof, self.alpha)
+        lo, hi = self.acceptance
+        if self.mean > hi:
+            return OVERCONFIDENT
+        if self.mean < lo:
+            return CONSERVATIVE
+        return CONSISTENT
 
     @property
     def pvalue(self) -> float:
-        return mean_pvalue(self.values, self.dof)
+        """Two-sided p-value for the mean NEES."""
+        lower = chi2.cdf(self.values.sum(), self.values.size * self.dof)
+        return float(2.0 * min(lower, 1.0 - lower))
 
     def coverage(
         self, levels: tuple[float, ...] = (0.5, 0.9, 0.95, 0.99)
     ) -> tuple[np.ndarray, np.ndarray]:
-        return coverage_curve(self.values, self.dof, levels)
+        """Empirical against nominal ellipsoid coverage."""
+        nominal = np.asarray(levels, dtype=float)
+        empirical = np.array(
+            [float(np.mean(self.values <= chi2.ppf(p, self.dof))) for p in nominal]
+        )
+        return nominal, empirical
 
 
 @dataclass
@@ -142,7 +114,6 @@ class Report:
     """Consistency results for one condition."""
 
     result: MonteCarloResult
-    lie: object
     alpha: float = 0.05
 
     @property
@@ -157,40 +128,6 @@ class Report:
         """consistent, conservative or OVERCONFIDENT."""
         return self.nees.verdict
 
-    def coverage_curve(
-        self, levels: tuple[float, ...] = (0.5, 0.9, 0.95, 0.99)
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Empirical against nominal ellipsoid coverage."""
-        return coverage_curve(self.result.nees_full, self.result.free_dof, levels)
-
-    def pose(self, k: int) -> ConsistencyReport:
-        """NEES for pose k."""
-        values = nees_series(self.result.pose_errors(k), self.result.pose_marginals(k))
-        return ConsistencyReport(values, self.result.dof, self.alpha)
-
-    def by_dof(self, pose: int | None = None) -> dict[str, ConsistencyReport]:
-        """NEES split into translation and rotation."""
-        if pose is not None:
-            errors = self.result.pose_errors(pose)
-            marginals = self.result.pose_marginals(pose)
-        else:
-            free = [k for k in range(self.result.errors.shape[1]) if k != self.result.anchor]
-            errors = self.result.errors[:, free, :].reshape(-1, self.result.dof)
-            marginals = self.result.marginals[:, free].reshape(
-                -1, self.result.dof, self.result.dof
-            )
-
-        split = nees_by_dof(self.lie, errors, marginals)
-        translation = self.lie.TRANSLATION_DOF
-        return {
-            "translation": ConsistencyReport(
-                split["translation"], translation, self.alpha
-            ),
-            "rotation": ConsistencyReport(
-                split["rotation"], self.result.dof - translation, self.alpha
-            ),
-        }
-
     def summary(self) -> str:
         """One-line summary."""
         nees = self.nees
@@ -202,9 +139,7 @@ class Report:
         )
 
 
-def consistency(
-    result: MonteCarloResult, lie, alpha: float = 0.05
-) -> Report:
+def consistency(result: MonteCarloResult, alpha: float = 0.05) -> Report:
     """Build a Report, refusing results with non-converged runs."""
     if not result.converged.all():
         failed = int((~result.converged).sum())
@@ -213,4 +148,4 @@ def consistency(
             "verdict over non-converged solutions would be meaningless. "
             "Inspect the condition, or re-run with the robust back-end."
         )
-    return Report(result, lie, alpha)
+    return Report(result, alpha)

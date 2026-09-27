@@ -171,12 +171,6 @@ class MonteCarloResult:
         """DOF of the full-state NEES after gauge fixing."""
         return (self.errors.shape[1] - 1) * self.dof
 
-    def pose_errors(self, k: int) -> np.ndarray:
-        return self.errors[:, k, :]
-
-    def pose_marginals(self, k: int) -> np.ndarray:
-        return self.marginals[:, k, :, :]
-
 
 def monte_carlo(
     lie,

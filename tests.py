@@ -117,7 +117,7 @@ def test_levenberg_marquardt_reaches_the_gauss_newton_optimum(lie):
 def test_near_linear_case_is_consistent(lie):
     scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=1, turn=0.05)
     result = monte_carlo(lie, scenario, NoiseModel(np.full(lie.DOF, 1e-3)), n_runs=150, seed=7)
-    report = consistency(result, lie, alpha=0.01)
+    report = consistency(result, alpha=0.01)
     assert report.verdict == CONSISTENT
     assert report.nees.mean / report.nees.dof == pytest.approx(1.0, abs=0.06)
 
