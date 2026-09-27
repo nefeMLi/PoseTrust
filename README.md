@@ -20,7 +20,8 @@ different ways. Cauchy and GNC report slightly too much uncertainty, mostly
 a variance error. Huber reports far too little, and the cause is not its
 covariance: the false closures it keeps pull the estimate off by an offset no
 covariance describes. Around that offset Huber's error scatters as its
-covariance says; the offset accounts for almost all of the excess. No
+covariance says; the offset accounts for most of the excess, 85–92% pooled
+over layouts, though less than half on one of the eight. No
 covariance computed from the same estimate fixed it on any of eight held-out
 graphs, including the sandwich covariance of M-estimation theory and one
 built from the closures it trusts.
@@ -56,7 +57,7 @@ bootstrap interval and a Benjamini-Hochberg correction across each experiment.
 | E2 loop-closure density | Sparse graphs are only slightly overconfident: at most +4.7%, significant only for SE(3) with 0–1 closures. |
 | E3 rotational noise | Calibration breaks from 0.06 rad (SE(3)) and 0.10 rad (SE(2)) and degrades quickly after that. At 0.22 rad only 1.5% of SE(3)'s 95% ellipsoids contain the truth. Across eight loop-closure layouts the break point ranges over 0.06–0.15 rad (SE(3)) and 0.06–0.22 rad (SE(2)); no layout is ever conservative. |
 | E4 false loop closures | Across eight loop-closure layouts, Huber is overconfident at every outlier rate on all eight (NEES/dof 1.35–3.25 on the original graph, up to 15.6 on others) while keeping the trajectory error at 30% outliers to 0.10–0.22, against 0.6–1.7 for plain least squares where it converges. DCS stays accurate and calibrated on six layouts and turns overconfident on two, from 15% and 25% outliers. Cauchy and GNC are accurate and mostly conservative. |
-| E5 which covariance to report | On eight held-out layouts, no covariance of Huber's estimate is calibrated at 10% outliers or more: naive, sandwich, expected sandwich or inlier-only, 0 of 8 each. The bias term is most of Huber's excess NEES (median 91–99%, over half on 6–8 layouts at each rate). The expected sandwich calibrates Cauchy at 0% outliers (7 of 8 layouts) but overshoots GNC. |
+| E5 which covariance to report | On eight held-out layouts, no covariance of Huber's estimate is calibrated at 10% outliers or more: naive, sandwich, expected sandwich or inlier-only, 0 of 8 each. The bias term is most of Huber's excess NEES: 85–92% pooled over layouts (median share per layout 91–99%), under half on one or two layouts at each rate. The expected sandwich calibrates Cauchy at 0% outliers (7 of 8 layouts) but overshoots GNC. |
 | E6 report the bias too | On eight graphs with new trajectories, adding Huber's estimated offset to its covariance brings the median NEES/dof from 1.50–2.89 to 1.02–1.18 across 10–30% outliers, within 10% at every rate on 1 of 8 graphs (pre-registered target: 6). Reject-and-refit is within 10% on 7 of 8. Neither changes DCS. |
 
 ![E3: calibration against rotational noise](figures/e3_nonlinearity.svg)

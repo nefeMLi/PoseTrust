@@ -316,14 +316,22 @@ def build_figure(split: str):
     label(left, "Huber under each covariance", "outlier rate", "mean NEES / dof")
     left.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
 
-    naive = [select(rows, method="Huber", rate=x, covariance="naive") for x in rates]
-    total = np.array([np.median([r["ratio"] - 1.0 for r in level]) for level in naive])
-    bias = np.array([np.median([r["bias_ratio"] for r in level]) for level in naive])
-    right.plot(rates, total, marker="o", linewidth=2.0, color=INK_MUTED, label="excess NEES / dof")
-    right.plot(rates, bias, marker="o", linewidth=2.0, color="#eb6834", label="bias term / dof")
-    right.set_xticks(rates, [f"{x:g}" for x in rates])
-    label(right, "Where Huber's excess comes from (naive)", "outlier rate", "per dof, median over layouts")
-    right.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
+    # One point per layout and rate: on the diagonal, the excess is all bias.
+    ramp = ["#b5d0f2", "#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]
+    shown = []
+    for colour, rate in zip(ramp, rates[1:]):
+        level = select(rows, method="Huber", rate=rate, covariance="naive")
+        excess = np.array([r["ratio"] - 1.0 for r in level])
+        bias = np.array([r["bias_ratio"] for r in level])
+        right.scatter(excess, bias, s=30, color=colour, label=f"{rate:g}", zorder=3)
+        shown.extend(v for v in np.r_[excess, bias] if v > 0)
+    ends = [0.8 * min(shown), 1.25 * max(shown)]
+    right.plot(ends, ends, color=INK_MUTED, linewidth=1.5, linestyle=":", label="all bias")
+    right.set_xscale("log")
+    right.set_yscale("log")
+    label(right, "Bias term against excess, per layout (naive)", "excess NEES / dof", "bias term / dof")
+    right.legend(frameon=False, fontsize=8, labelcolor=INK_MUTED, loc="upper left", title="outlier rate",
+                 title_fontsize=8)
 
     title(fig, f"E5 ({split} layouts): no covariance fixes Huber, because its error is bias")
     return fig
