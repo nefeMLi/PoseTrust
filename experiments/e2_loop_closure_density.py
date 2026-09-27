@@ -10,16 +10,17 @@ import numpy as np
 
 from experiments.common import (
     BAND,
-    INK,
     INK_MUTED,
     OBSERVED,
     calibration,
     figure,
     label,
+    legend_below,
     mark_fdr,
     read_results,
-    save_figure,
+    save_figures,
     survivorship_warning,
+    title,
     write_results,
 )
 from posetrust import se2, se3
@@ -166,35 +167,9 @@ def build_figure():
         )
 
     # One legend for both panels; they show the same series.
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="outside lower center",
-        ncols=3,
-        frameon=False,
-        fontsize=8.5,
-        labelcolor=INK_MUTED,
-    )
-    fig.suptitle(
-        "E2: does the reported covariance degrade as loop closures thin out?",
-        color=INK,
-        fontsize=12,
-        x=0.02,
-        ha="left",
-    )
+    legend_below(fig, *axes[0].get_legend_handles_labels(), ncols=3)
+    title(fig, "E2: does the reported covariance degrade as loop closures thin out?")
     return fig
-
-
-def figures() -> bool:
-    fig = build_figure()
-    try:
-        path = save_figure(fig, "e2_loop_closure_density")
-    except ImportError as exc:
-        print(f"figure built but not written: no usable renderer ({exc})")
-        return False
-    print(f"figure written to {path}")
-    return True
 
 
 def main() -> int:
@@ -207,7 +182,7 @@ def main() -> int:
         report_console(read_results("e2_density"))
     else:
         run(args.runs)
-    figures()
+    save_figures((build_figure, "e2_loop_closure_density"))
     return 0
 
 

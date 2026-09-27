@@ -15,7 +15,8 @@ from experiments.common import (
     figure,
     label,
     read_results,
-    save_figure,
+    save_figures,
+    title,
     write_results,
 )
 from posetrust import se2, se3
@@ -167,19 +168,6 @@ def report_console(exact_rows, nees_rows) -> bool:
     return passed
 
 
-def figures() -> bool:
-    """Redraw the E1 figure from the stored results."""
-    fig = build_figure()
-    try:
-        path = save_figure(fig, "e1_validation_gate")
-    except ImportError as exc:
-        print(f"figure built but not written: no usable renderer here ({exc})")
-        print("results are in results/; rerun with --figures-only to write it.")
-        return False
-    print(f"figure written to {path}")
-    return True
-
-
 def build_figure():
     """Assemble the E1 figure."""
     summaries = read_results("e1_nees")
@@ -269,13 +257,7 @@ def build_figure():
             color=INK,
         )
 
-    fig.suptitle(
-        "E1: where the Laplace covariance is exact, the solver agrees with it",
-        color=INK,
-        fontsize=12,
-        x=0.02,
-        ha="left",
-    )
+    title(fig, "E1: where the Laplace covariance is exact, the solver agrees with it")
     return fig
 
 
@@ -293,7 +275,7 @@ def main() -> int:
         passed = report_console(read_results("e1_exactness"), read_results("e1_nees"))
     else:
         passed = run(args.runs)
-    figures()
+    save_figures((build_figure, "e1_validation_gate"))
     return 0 if passed else 1  # the gate's verdict, not the plotting backend's
 
 

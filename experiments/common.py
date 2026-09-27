@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import matplotlib
@@ -85,14 +86,29 @@ def calibration(result) -> dict:
     }
 
 
-def mark_fdr(rows: list[dict]) -> None:
-    """Mark which usable conditions survive Benjamini-Hochberg."""
-    usable = [r for r in rows if r["usable"]]
-    flagged = benjamini_hochberg(np.array([r["pvalue"] for r in usable]), ALPHA)
-    for row, reject in zip(usable, flagged):
-        row["significant_after_fdr"] = bool(reject)
+def parallel(fn, tasks):
+    """fn(*task) for every task, across processes, yielded in task order."""
+    with ProcessPoolExecutor() as pool:
+        futures = [pool.submit(fn, *task) for task in tasks]
+        for future in futures:
+            yield future.result()
+
+
+def mark_fdr(rows: list[dict], by: tuple[str, ...] = ()) -> None:
+    """Mark which usable conditions survive Benjamini-Hochberg.
+
+    The correction runs separately within each group of rows sharing the keys in by.
+    """
+    groups: dict[tuple, list[dict]] = {}
     for row in rows:
-        row.setdefault("significant_after_fdr", False)
+        groups.setdefault(tuple(row[k] for k in by), []).append(row)
+    for group in groups.values():
+        usable = [r for r in group if r["usable"]]
+        flagged = benjamini_hochberg(np.array([r["pvalue"] for r in usable]), ALPHA)
+        for row, reject in zip(usable, flagged):
+            row["significant_after_fdr"] = bool(reject)
+        for row in group:
+            row.setdefault("significant_after_fdr", False)
 
 
 def survivorship_warning(rows: list[dict], describe) -> None:
@@ -184,6 +200,32 @@ def save_figure(fig, name: str) -> Path:
     matplotlib.rcParams["svg.hashsalt"] = name
     fig.savefig(path, facecolor=SURFACE, metadata={"Date": None})
     return path
+
+
+def title(fig, text: str) -> None:
+    fig.suptitle(text, color=INK, fontsize=12, x=0.02, ha="left")
+
+
+def legend_below(fig, handles, labels, ncols: int) -> None:
+    """One legend under all panels."""
+    fig.legend(
+        handles,
+        labels,
+        loc="outside lower center",
+        ncols=ncols,
+        frameon=False,
+        fontsize=8.5,
+        labelcolor=INK_MUTED,
+    )
+
+
+def save_figures(*builders) -> None:
+    """Build and write each (builder, name) pair."""
+    for builder, name in builders:
+        try:
+            print(f"figure written to {save_figure(builder(), name)}")
+        except ImportError as exc:
+            print(f"{name} built but not written: no usable renderer ({exc})")
 
 
 def label(ax, title: str, xlabel: str = "", ylabel: str = "") -> None:

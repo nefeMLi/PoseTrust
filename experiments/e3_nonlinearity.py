@@ -4,23 +4,24 @@ from __future__ import annotations
 
 import argparse
 import sys
-from concurrent.futures import ProcessPoolExecutor
 from itertools import pairwise
 
 import numpy as np
 
 from experiments.common import (
-    INK,
     INK_MUTED,
     OBSERVED,
     SURVIVORSHIP_FRACTION,
     calibration,
     figure,
     label,
+    legend_below,
     mark_fdr,
+    parallel,
     read_results,
-    save_figure,
+    save_figures,
     survivorship_warning,
+    title,
     write_results,
 )
 from posetrust import se2, se3
@@ -117,21 +118,17 @@ def run_graphs(n_runs: int) -> None:
         for g in range(len(GROUPS))
         for sigma in ROTATION_NOISE
     ]
-    with ProcessPoolExecutor() as pool:
-        futures = [pool.submit(_graph_condition, g, s, n_runs, seed) for g, s, seed in tasks]
-        rows = []
-        for future in futures:
-            row = future.result()
-            rows.append(row)
-            print(
-                f"  graph {row['graph']} {row['group']} rot sigma "
-                f"{row['rotation_sigma']:<5} -> {row['verdict']}",
-                flush=True,
-            )
+    rows = []
+    for row in parallel(_graph_condition, [(g, s, n_runs, seed) for g, s, seed in tasks]):
+        rows.append(row)
+        print(
+            f"  graph {row['graph']} {row['group']} rot sigma "
+            f"{row['rotation_sigma']:<5} -> {row['verdict']}",
+            flush=True,
+        )
 
     # Correct within each layout's sweep, as for the single graph.
-    for seed in GRAPH_SEEDS:
-        mark_fdr([r for r in rows if r["graph"] == seed])
+    mark_fdr(rows, by=("graph",))
     write_results(rows, "e3_graphs")
     report_graphs(rows)
 
@@ -307,23 +304,8 @@ def build_figure():
             "mean NEES / dof" if index == 0 else "",
         )
 
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="outside lower center",
-        ncols=3,
-        frameon=False,
-        fontsize=8.5,
-        labelcolor=INK_MUTED,
-    )
-    fig.suptitle(
-        "E3: overconfidence against rotational noise",
-        color=INK,
-        fontsize=12,
-        x=0.02,
-        ha="left",
-    )
+    legend_below(fig, *axes[0].get_legend_handles_labels(), ncols=3)
+    title(fig, "E3: overconfidence against rotational noise")
     return fig
 
 
@@ -391,23 +373,8 @@ def build_coverage_figure():
             "empirical coverage" if index == 0 else "",
         )
 
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="outside lower center",
-        ncols=6,
-        frameon=False,
-        fontsize=8.5,
-        labelcolor=INK_MUTED,
-    )
-    fig.suptitle(
-        "E3: credible regions cover less than they claim as rotation grows",
-        color=INK,
-        fontsize=12,
-        x=0.02,
-        ha="left",
-    )
+    legend_below(fig, *axes[0].get_legend_handles_labels(), ncols=6)
+    title(fig, "E3: credible regions cover less than they claim as rotation grows")
     return fig
 
 
@@ -453,39 +420,9 @@ def build_graphs_figure():
             "mean NEES / dof" if index == 0 else "",
         )
 
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="outside lower center",
-        ncols=3,
-        frameon=False,
-        fontsize=8.5,
-        labelcolor=INK_MUTED,
-    )
-    fig.suptitle(
-        "E3 across graphs: where calibration breaks depends on the layout",
-        color=INK,
-        fontsize=12,
-        x=0.02,
-        ha="left",
-    )
+    legend_below(fig, *axes[0].get_legend_handles_labels(), ncols=3)
+    title(fig, "E3 across graphs: where calibration breaks depends on the layout")
     return fig
-
-
-def figures() -> bool:
-    written = True
-    for builder, name in (
-        (build_figure, "e3_nonlinearity"),
-        (build_coverage_figure, "e3_coverage"),
-        (build_graphs_figure, "e3_graphs"),
-    ):
-        try:
-            print(f"figure written to {save_figure(builder(), name)}")
-        except ImportError as exc:
-            print(f"{name} built but not written: no usable renderer ({exc})")
-            written = False
-    return written
 
 
 def main() -> int:
@@ -504,7 +441,11 @@ def main() -> int:
         run_graphs(args.runs)
     else:
         run(args.runs)
-    figures()
+    save_figures(
+        (build_figure, "e3_nonlinearity"),
+        (build_coverage_figure, "e3_coverage"),
+        (build_graphs_figure, "e3_graphs"),
+    )
     return 0
 
 

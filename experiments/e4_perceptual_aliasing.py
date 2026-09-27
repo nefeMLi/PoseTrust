@@ -4,22 +4,23 @@ from __future__ import annotations
 
 import argparse
 import sys
-from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
 from experiments.common import (
     BAND,
-    INK,
     INK_MUTED,
     bootstrap_interval,
     calibration,
     figure,
     label,
+    legend_below,
     mark_fdr,
+    parallel,
     read_results,
-    save_figure,
+    save_figures,
     survivorship_warning,
+    title,
     write_results,
 )
 from posetrust import se2
@@ -133,17 +134,14 @@ def _condition_by_index(method: int, rate: float, n_runs: int) -> dict:
 def run(n_runs: int) -> None:
     # Conditions are seeded independently, so parallel runs give the same results.
     tasks = [(m, rate) for m in range(len(METHODS)) for rate in OUTLIER_RATES]
-    with ProcessPoolExecutor() as pool:
-        futures = [pool.submit(_condition_by_index, m, rate, n_runs) for m, rate in tasks]
-        rows = []
-        for future in futures:
-            row = future.result()
-            rows.append(row)
-            print(
-                f"  {row['method']:<20} rate {row['rate']:<5} -> "
-                f"rms {row['rms_error']:.3f}, {row['verdict']}",
-                flush=True,
-            )
+    rows = []
+    for row in parallel(_condition_by_index, [(m, rate, n_runs) for m, rate in tasks]):
+        rows.append(row)
+        print(
+            f"  {row['method']:<20} rate {row['rate']:<5} -> "
+            f"rms {row['rms_error']:.3f}, {row['verdict']}",
+            flush=True,
+        )
 
     mark_fdr(rows)
     write_results(rows, "e4_aliasing")
@@ -162,21 +160,17 @@ def run_graphs(n_runs: int) -> None:
         for m in range(len(METHODS))
         for rate in OUTLIER_RATES
     ]
-    with ProcessPoolExecutor() as pool:
-        futures = [pool.submit(_graph_condition, m, r, n_runs, seed) for m, r, seed in tasks]
-        rows = []
-        for future in futures:
-            row = future.result()
-            rows.append(row)
-            print(
-                f"  graph {row['graph']} {row['method']:<20} rate {row['rate']:<5} -> "
-                f"rms {row['rms_error']:.3f}, {row['verdict']}",
-                flush=True,
-            )
+    rows = []
+    for row in parallel(_graph_condition, [(m, r, n_runs, seed) for m, r, seed in tasks]):
+        rows.append(row)
+        print(
+            f"  graph {row['graph']} {row['method']:<20} rate {row['rate']:<5} -> "
+            f"rms {row['rms_error']:.3f}, {row['verdict']}",
+            flush=True,
+        )
 
     # Correct within each layout's sweep, as for the single graph.
-    for seed in GRAPH_SEEDS:
-        mark_fdr([r for r in rows if r["graph"] == seed])
+    mark_fdr(rows, by=("graph",))
     write_results(rows, "e4_graphs")
     report_graphs(rows)
 
@@ -427,22 +421,8 @@ def build_figure():
         if text not in labels:
             handles.append(handle)
             labels.append(text)
-    fig.legend(
-        handles,
-        labels,
-        loc="outside lower center",
-        ncols=4,
-        frameon=False,
-        fontsize=8.5,
-        labelcolor=INK_MUTED,
-    )
-    fig.suptitle(
-        "E4: robust back-ends restore the trajectory. Not all restore the covariance.",
-        color=INK,
-        fontsize=12,
-        x=0.02,
-        ha="left",
-    )
+    legend_below(fig, handles, labels, ncols=4)
+    title(fig, "E4: robust back-ends restore the trajectory. Not all restore the covariance.")
     return fig
 
 
@@ -479,28 +459,8 @@ def build_graphs_figure():
         label(ax, method_name, "outlier rate", "mean NEES / dof")
         ax.legend(frameon=False, fontsize=8, labelcolor=INK_MUTED, loc="upper left")
 
-    fig.suptitle(
-        f"E4 across graphs: calibration on {len(GRAPH_SEEDS)} loop-closure layouts",
-        color=INK,
-        fontsize=12,
-        x=0.02,
-        ha="left",
-    )
+    title(fig, f"E4 across graphs: calibration on {len(GRAPH_SEEDS)} loop-closure layouts")
     return fig
-
-
-def figures() -> bool:
-    written = True
-    for builder, name in (
-        (build_figure, "e4_perceptual_aliasing"),
-        (build_graphs_figure, "e4_graphs"),
-    ):
-        try:
-            print(f"figure written to {save_figure(builder(), name)}")
-        except ImportError as exc:
-            print(f"{name} built but not written: no usable renderer ({exc})")
-            written = False
-    return written
 
 
 def main() -> int:
@@ -519,7 +479,7 @@ def main() -> int:
         run_graphs(args.runs)
     else:
         run(args.runs)
-    figures()
+    save_figures((build_figure, "e4_perceptual_aliasing"), (build_graphs_figure, "e4_graphs"))
     return 0
 
 

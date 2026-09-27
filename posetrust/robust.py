@@ -6,7 +6,7 @@ with s the squared Mahalanobis residual.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy.stats import chi2
@@ -229,11 +229,4 @@ def graduated_non_convexity(
         max_iterations=max_iterations,
         tol=tol,
     )
-    return Result(
-        final.poses,
-        final.chi2,
-        annealing + final.iterations,
-        final.converged,
-        final.information,
-        anchor,
-    )
+    return replace(final, iterations=annealing + final.iterations)

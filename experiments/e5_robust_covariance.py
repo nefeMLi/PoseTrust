@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import argparse
 import sys
-from concurrent.futures import ProcessPoolExecutor
 from types import SimpleNamespace
 
 import numpy as np
 
 from experiments.common import (
-    INK,
     INK_MUTED,
     calibration,
     figure,
     label,
     mark_fdr,
+    parallel,
     read_results,
-    save_figure,
+    save_figures,
+    title,
     write_results,
 )
 from experiments.e4_perceptual_aliasing import (
@@ -173,25 +173,17 @@ def tasks(seeds, gate_only: bool):
 
 def run(split: str, n_runs: int, gate_only: bool) -> None:
     seeds = SPLITS[split]
-    with ProcessPoolExecutor() as pool:
-        futures = [
-            pool.submit(condition, m, rate, seed, n_runs)
-            for m, rate, seed in tasks(seeds, gate_only)
-        ]
-        rows = []
-        for future in futures:
-            batch = future.result()
-            rows.extend(batch)
-            first = batch[0]
-            print(
-                f"  graph {first['graph']} {first['method']:<20} rate {first['rate']:<5} "
-                + " ".join(f"{r['covariance']} {r['ratio']:.2f}" for r in batch),
-                flush=True,
-            )
+    rows = []
+    for batch in parallel(condition, [(m, r, s, n_runs) for m, r, s in tasks(seeds, gate_only)]):
+        rows.extend(batch)
+        first = batch[0]
+        print(
+            f"  graph {first['graph']} {first['method']:<20} rate {first['rate']:<5} "
+            + " ".join(f"{r['covariance']} {r['ratio']:.2f}" for r in batch),
+            flush=True,
+        )
 
-    for seed in seeds:
-        for c in NAMES:
-            mark_fdr([r for r in rows if r["graph"] == seed and r["covariance"] == c])
+    mark_fdr(rows, by=("graph", "covariance"))
     name = f"e5_{split}_gate" if gate_only else f"e5_{split}"
     write_results(rows, name)
     report(rows)
@@ -317,21 +309,8 @@ def build_figure(split: str):
     label(right, "Where Huber's excess comes from (naive)", "outlier rate", "per dof, median over layouts")
     right.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
 
-    fig.suptitle(
-        f"E5 ({split} layouts): a better covariance for the same Huber estimate",
-        color=INK,
-        fontsize=12,
-        x=0.02,
-        ha="left",
-    )
+    title(fig, f"E5 ({split} layouts): a better covariance for the same Huber estimate")
     return fig
-
-
-def figures(split: str) -> None:
-    try:
-        print(f"figure written to {save_figure(build_figure(split), f'e5_{split}')}")
-    except ImportError as exc:
-        print(f"figure built but not written: no usable renderer ({exc})")
 
 
 def main() -> int:
@@ -347,7 +326,7 @@ def main() -> int:
     else:
         run(args.split, args.runs, args.gate)
     if not args.gate:
-        figures(args.split)
+        save_figures((lambda: build_figure(args.split), f"e5_{args.split}"))
     return 0
 
 
