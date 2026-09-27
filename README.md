@@ -14,9 +14,9 @@ closures left in the graph) the reported covariance is honest. When it fails,
 it fails in the dangerous direction, claiming more certainty than it has: from
 about 0.06–0.1 rad of rotational noise per measurement in most graphs tested,
 severely under uncaught false loop closures, and even after a convex robust
-kernel (Huber) has restored the trajectory itself. Of the robust back-ends
-tested, only dynamic covariance scaling (DCS) kept the covariance honest at
-every outlier rate.
+kernel (Huber) has contained the damage to the trajectory. Across eight graphs,
+Huber's covariance was overconfident on every one; dynamic covariance scaling
+(DCS) kept it honest on six.
 
 ![E4: trajectory error and calibration against the outlier rate](figures/e4_perceptual_aliasing.svg)
 
@@ -39,7 +39,7 @@ bootstrap interval and a Benjamini-Hochberg correction across each experiment.
 | E1 validation gate | Where the covariance is exact, mean NEES/dof is 0.975 (SE(2)) and 0.993 (SE(3)). The implementation passes. |
 | E2 loop-closure density | Sparse graphs are only slightly overconfident: at most +4.7%, significant only for SE(3) with 0–1 closures. |
 | E3 rotational noise | Calibration breaks from 0.06 rad (SE(3)) and 0.10 rad (SE(2)) and degrades quickly after that. At 0.22 rad only 1.5% of SE(3)'s 95% ellipsoids contain the truth. Across eight loop-closure layouts the break point ranges over 0.06–0.15 rad (SE(3)) and 0.06–0.22 rad (SE(2)); no layout is ever conservative. |
-| E4 false loop closures | Huber recovers accuracy but not calibration (1.35 → 3.25). DCS recovers both. Cauchy and GNC are accurate but conservative. |
+| E4 false loop closures | Across eight loop-closure layouts, Huber is overconfident at every outlier rate on all eight (NEES/dof 1.35–3.25 on the original graph, up to 15.6 on others) while keeping the trajectory error to 0.10–0.17, against 0.5–0.9 for plain least squares. DCS stays accurate and calibrated on six layouts and turns overconfident on two, from 15% and 25% outliers. Cauchy and GNC are accurate and mostly conservative. |
 
 ![E3: calibration against rotational noise](figures/e3_nonlinearity.svg)
 
@@ -59,11 +59,24 @@ and still pulls the estimate slightly. The reported covariance shrinks while
 the error does not. Redescending kernels give a gross outlier almost zero
 weight, which removes both effects.
 
+![E4 across graphs: calibration of each robust back-end on eight layouts](figures/e4_graphs.svg)
+
+The rule for keeping E4's headline was fixed before the repeat: Huber
+overconfident at every rate from 10% up, and DCS at none, on at least six of
+the eight layouts. It holds on exactly six. The original graph turned out to
+be the mildest case for Huber. On both layouts where DCS fails, the failure
+starts at the rate that adds a false closure pointing one pose away from its
+true end, the smallest offset in the sweep, and Cauchy fails from the same
+rate. Two other layouts get such a closure without failing, so that is not
+the whole explanation.
+
 Limitations:
 
 - Simulation only. A real-data experiment was planned and cut.
-- E1, E2 and E4 each use one graph. E3 was repeated across loop-closure
-  layouts, but all on one trajectory.
+- E1 and E2 each use one graph. E3 and E4 were repeated across eight
+  loop-closure layouts, all on one trajectory.
+- Huber's trajectory error stays within twice its outlier-free error at 34 of
+  48 corrupted conditions, so "contained" rather than "recovered".
 - At high noise the mean NEES is driven by a minority of runs (1.5–2.8× the
   median), so read the magnitudes alongside the coverage figure.
 - Cauchy and GNC also down-weight correct measurements, which inflates the
@@ -118,12 +131,15 @@ python -m experiments.e2_loop_closure_density
 python -m experiments.e3_nonlinearity
 python -m experiments.e3_nonlinearity --graphs
 python -m experiments.e4_perceptual_aliasing
+python -m experiments.e4_perceptual_aliasing --graphs
 ```
 
 Each script writes its results to `results/` and its figure to `figures/`.
 Add `--figures-only` to redraw a figure from the saved results in seconds.
-E1 takes about a minute, E2 about ten, E3 up to an hour. E3 `--graphs` and
-E4 run in parallel and take about six and twenty minutes on twelve cores.
+E1 takes about a minute, E2 about ten, E3 up to an hour. The rest run in
+parallel; on twelve cores E3 `--graphs` takes about six minutes, E4 about
+twenty and E4 `--graphs` a few hours, most of it plain least squares, which
+on some layouts never converges and runs to its iteration limit.
 
 The core checks run with `pytest tests.py`.
 
