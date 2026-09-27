@@ -468,3 +468,95 @@ also records the NEES of those runs and of the rest, pooled over layouts, so
 H6c can be judged on the runs it is about.
 
 Nothing else changes. The test layouts have not been run.
+
+---
+
+## E6: report the bias as well as the variance
+
+Dated 2026-09-27, after the E5 test run and before any E6 code exists.
+
+### The question
+
+E5 found that Huber's covariance describes the scatter of its errors well and
+misses a shift: the false closures it keeps pull the estimate off, and that
+offset is almost all of the excess NEES. If the shift can be estimated from
+the solution itself, reporting the mean squared error instead of the variance
+should make Huber honest without changing its estimate. Does it?
+
+### Prior work
+
+GNSS integrity monitoring (RAIM and ARAIM, e.g. Blanch, Walter and Enge,
+2012) projects the bias of a faulty measurement through the least-squares
+solution into a bound on the position error. E6 borrows that projection. It
+differs in estimating the pull a robust kernel's down-weighted factors
+actually exert at the solution, rather than bounding hypothetical faults, and
+in asking for a calibrated covariance rather than a bound. Robust statistics
+knows Huber's bias is bounded and non-zero (influence function); robust
+pose-graph work removes outliers but does not test the covariance it reports.
+
+### The method
+
+At a converged robust estimate the gradient vanishes, so the pull of the
+down-weighted factors P is balanced by the rest T:
+`Σ_T J_iᵀe_i = −Σ_P w_i J_iᵀe_i`. Removing P would move the estimate by one
+Gauss-Newton step, so the estimated shift is
+
+    b̂ = −H_T⁻¹ Σ_P w_i J_iᵀ e_i,    H_T = Σ_T J_iᵀJ_i,
+
+and the reported covariance becomes `Σ_E6 = Σ_naive + b̂ b̂ᵀ`. In the scalar
+model this gives `b̂ = kδ/n`, the bias derived there; a test checks it.
+
+P is the set of loop closures whose squared residual at the solution exceeds
+a threshold q. Correct closures above q add noise to `b̂`, so q trades
+missed false closures against spurious inflation. q is chosen on the
+development layouts from the χ²(3) quantiles {0.95, 0.99, 0.999}, as the one
+whose Huber NEES/dof is closest to 1 on average over development layouts and
+rates of 10% and above, and fixed before the test run.
+
+### Comparator: reject and refit
+
+What an engineer would try first: drop the closures in P, re-solve with
+plain least squares from the robust estimate, and report that solution with
+its own covariance. Unlike E6 it changes the estimate.
+
+### Layouts
+
+Development: the E4 layouts, seeds 300 to 1000, trajectory turn 0.25.
+Test, run once: eight graphs on trajectories none of the earlier experiments
+used, turn 0.10 and 0.40, with scenario seeds 1900, 2000, 2100 and 2200 for
+each. Everything else as in E4: 20 poses, 20 closures, the E4 outlier rates,
+noise and 200 runs per condition. Huber and DCS are run; DCS is the check
+that the method leaves a back-end that is already calibrated alone.
+
+### Predictions
+
+**H7a (primary).** Under `Σ_E6`, Huber's NEES/dof lies within [0.9, 1.1] at
+every rate of 10% and above on at least six of the eight test graphs.
+Falsified otherwise. Also reported: the strict E5 criterion (calibrated
+after Benjamini-Hochberg), which is not expected to hold everywhere, since
+at 200 runs it flags errors of a few percent.
+
+**H7b.** At 0% outliers `Σ_E6` does not make Huber conservative: NEES/dof in
+[0.9, 1.1] on at least six of eight test graphs.
+
+**H7c.** For DCS, `Σ_E6` changes NEES/dof by less than 0.05 at every rate on
+at least six of eight test graphs, because its weights on gross outliers are
+near zero.
+
+**H7d (comparator).** Reject-and-refit is also within [0.9, 1.1] at every
+rate of 10% and above on at least six of eight test graphs. If it is, E6's
+case rests on keeping the estimate and on the explanation, not on being the
+only fix.
+
+Confidence: moderate for H7a. `b̂` is a first-order estimate, and large
+pulls on these small graphs may be beyond first order; the scalar model says
+nothing about how the pull spreads through a graph.
+
+### Rules
+
+- Only q is tuned, only on development layouts, only by the rule above. Any
+  other change after development results is recorded here before the test
+  run.
+- The test graphs are run once. A bug found afterwards is fixed, recorded,
+  and both results reported.
+- Non-converged runs are excluded and counted, as before.
