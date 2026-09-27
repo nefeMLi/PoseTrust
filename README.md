@@ -13,10 +13,10 @@ Where the problem is close to linear (small rotational noise, no false loop
 closures left in the graph) the reported covariance is honest. When it fails,
 it fails in the dangerous direction, claiming more certainty than it has: from
 about 0.06–0.1 rad of rotational noise per measurement in most graphs tested,
-severely under uncaught
-false loop closures, and even after a convex robust kernel (Huber) has restored
-the trajectory itself. Of the robust back-ends tested, only switchable
-constraints kept the covariance honest at every outlier rate.
+severely under uncaught false loop closures, and even after a convex robust
+kernel (Huber) has restored the trajectory itself. Of the robust back-ends
+tested, only dynamic covariance scaling (DCS) kept the covariance honest at
+every outlier rate.
 
 ![E4: trajectory error and calibration against the outlier rate](figures/e4_perceptual_aliasing.svg)
 
@@ -39,7 +39,7 @@ bootstrap interval and a Benjamini-Hochberg correction across each experiment.
 | E1 validation gate | Where the covariance is exact, mean NEES/dof is 0.975 (SE(2)) and 0.993 (SE(3)). The implementation passes. |
 | E2 loop-closure density | Sparse graphs are only slightly overconfident: at most +4.7%, significant only for SE(3) with 0–1 closures. |
 | E3 rotational noise | Calibration breaks from 0.06 rad (SE(3)) and 0.10 rad (SE(2)) and degrades quickly after that. At 0.22 rad only 1.5% of SE(3)'s 95% ellipsoids contain the truth. Across eight loop-closure layouts the break point ranges over 0.06–0.15 rad (SE(3)) and 0.06–0.22 rad (SE(2)); no layout is ever conservative. |
-| E4 false loop closures | Huber recovers accuracy but not calibration (1.35 → 3.25). Switchable constraints recovers both. Cauchy and GNC are accurate but conservative. |
+| E4 false loop closures | Huber recovers accuracy but not calibration (1.35 → 3.25). DCS recovers both. Cauchy and GNC are accurate but conservative. |
 
 ![E3: calibration against rotational noise](figures/e3_nonlinearity.svg)
 
@@ -80,8 +80,8 @@ machinery used here. E3 is the batch pose-graph version of that result, not
 a new effect.
 
 Robust back-ends such as switchable constraints [4], dynamic covariance
-scaling [5] and graduated non-convexity [6] were evaluated on the trajectory
-they recover. What this repository adds is the other half: whether the
+scaling [5] (its closed form, and the version tested here) and graduated
+non-convexity [6] were evaluated on the trajectory they recover. What this repository adds is the other half: whether the
 covariance they report is still honest once the outliers are handled. NEES
 and its chi-squared test follow Bar-Shalom et al. [7].
 
@@ -134,7 +134,7 @@ posetrust/         the SLAM back-end and the statistics
   se2.py, se3.py     the Lie groups (exp, log, adjoint, right Jacobian)
   graph.py           the pose graph, residuals and analytic Jacobians
   optimizer.py       Gauss-Newton and Levenberg-Marquardt, gauge fixing
-  robust.py          Huber, Cauchy, switchable constraints, IRLS, GNC
+  robust.py          Huber, Cauchy, DCS, IRLS, GNC
   covariance.py      marginal and relative covariances by selected inversion
   simulate.py        scenarios, measurement noise, the Monte Carlo harness
   stats.py           NEES, chi-squared tests, coverage, consistency()
