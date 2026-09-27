@@ -186,7 +186,8 @@ def plot(rows, huber_rows) -> None:
             series[seed] = [mine[x]["ratio"] if mine[x]["usable"] else np.nan for x in OUTLIER_RATES]
         layout_lines(ax, series, OUTLIER_RATES, SEED, COLOURS[method])
         ax.set(title=method, xlabel="outlier rate", ylabel="mean NEES / dof")
-        ax.legend(frameon=False, loc="upper left")
+        ax.label_outer()  # axis labels only on the outer panels
+    axes[0, 0].legend(frameon=False, loc="upper left")
     fig.suptitle("Calibration of each robust back-end on eight loop-closure layouts")
     save_figure(fig, "false_loop_closures")
 
