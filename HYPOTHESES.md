@@ -262,3 +262,20 @@ neighbouring noise levels.
 runs.** A method counts as having recovered at a rate when its trajectory
 error there is below twice its own error with no outliers. The threshold
 was not fixed here in advance and is reported as a choice, not a rule.
+
+---
+
+## Amendment, 2026-09-27: E3 across graphs
+
+Written before the new runs. E3 used one graph, and a post-hoc check at
+0.15 rad found the size of the effect varied up to five-fold across graphs.
+E3 is therefore repeated on eight loop-closure layouts of the same
+trajectory (scenario seeds 200, 300, ..., 900; seed 200 is the original
+graph), with the same noise levels, 200 runs per condition and
+Benjamini-Hochberg within each layout's sweep.
+
+This is exploratory, not a new prediction. For each layout it reports the
+first noise level that is overconfident after correction, and the spread of
+NEES/dof at each level. If the breaking points differ by more than one grid
+step, the README gives them as a range rather than quoting the original
+graph's values.
