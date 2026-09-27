@@ -422,7 +422,7 @@ def build_figure():
             handles.append(handle)
             labels.append(text)
     legend_below(fig, handles, labels, ncols=4)
-    title(fig, "E4: robust back-ends restore the trajectory. Not all restore the covariance.")
+    title(fig, "E4: robust back-ends contain the trajectory error. Not all keep the covariance honest.")
     return fig
 
 
