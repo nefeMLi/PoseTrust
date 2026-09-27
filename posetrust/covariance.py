@@ -34,9 +34,7 @@ def selected_inverse(L: np.ndarray) -> np.ndarray:
     return sigma
 
 
-def covariance_matrix(
-    information: np.ndarray, anchor: int, dof: int
-) -> np.ndarray:
+def covariance_matrix(information: np.ndarray, anchor: int, dof: int) -> np.ndarray:
     """Full state covariance; the anchored pose's block is zero."""
     n_poses = information.shape[0] // dof
     free = free_mask(n_poses, dof, anchor)
@@ -46,18 +44,14 @@ def covariance_matrix(
     return sigma
 
 
-def marginal_covariances(
-    information: np.ndarray, anchor: int, dof: int
-) -> list[np.ndarray]:
+def marginal_covariances(information: np.ndarray, anchor: int, dof: int) -> list[np.ndarray]:
     """Per-pose marginal covariance blocks."""
     sigma = covariance_matrix(information, anchor, dof)
     n_poses = information.shape[0] // dof
     return [sigma[k * dof : (k + 1) * dof, k * dof : (k + 1) * dof] for k in range(n_poses)]
 
 
-def joint_covariance(
-    information: np.ndarray, i: int, j: int, anchor: int, dof: int
-) -> np.ndarray:
+def joint_covariance(information: np.ndarray, i: int, j: int, anchor: int, dof: int) -> np.ndarray:
     """Joint covariance of poses i and j."""
     sigma = covariance_matrix(information, anchor, dof)
     idx = np.r_[i * dof : (i + 1) * dof, j * dof : (j + 1) * dof]
@@ -65,12 +59,7 @@ def joint_covariance(
 
 
 def relative_covariance(
-    lie,
-    information: np.ndarray,
-    poses: list[np.ndarray],
-    i: int,
-    j: int,
-    anchor: int,
+    lie, information: np.ndarray, poses: list[np.ndarray], i: int, j: int, anchor: int
 ) -> np.ndarray:
     """Covariance of the relative pose Ti^-1 Tj."""
     dof = lie.DOF

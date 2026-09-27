@@ -35,18 +35,10 @@ class PoseGraph:
         self.poses.append(np.asarray(T, dtype=float))
         return len(self.poses) - 1
 
-    def add_factor(
-        self, i: int, j: int, measurement: np.ndarray, information: np.ndarray
-    ) -> None:
+    def add_factor(self, i: int, j: int, measurement: np.ndarray, information: np.ndarray) -> None:
         measurement = np.asarray(measurement, dtype=float)
         self.factors.append(
-            Factor(
-                i,
-                j,
-                measurement,
-                np.asarray(information, dtype=float),
-                self.lie.inverse(measurement),
-            )
+            Factor(i, j, measurement, np.asarray(information, dtype=float), self.lie.inverse(measurement))
         )
 
     def residual(self, factor: Factor, poses: list[np.ndarray]) -> np.ndarray:
@@ -62,16 +54,12 @@ class PoseGraph:
         inverses = [self.lie.inverse(T) for T in poses]
         return [self._residual(f, inverses[f.i], poses[f.j]) for f in self.factors]
 
-    def factor_jacobians(
-        self, factor: Factor, poses: list[np.ndarray]
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def factor_jacobians(self, factor: Factor, poses: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
         """Residual Jacobians for right perturbations of Ti and Tj."""
         r0 = self.residual(factor, poses)
         return self._jacobians(r0, self.lie.inverse(poses[factor.j]), poses[factor.i])
 
-    def _jacobians(
-        self, r0: np.ndarray, Tj_inv: np.ndarray, Ti: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _jacobians(self, r0: np.ndarray, Tj_inv: np.ndarray, Ti: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         lie = self.lie
         jr_inv = np.linalg.inv(lie.right_jacobian(r0))
         m_inv = lie.compose(Tj_inv, Ti)
@@ -84,9 +72,7 @@ class PoseGraph:
             total += float(r @ factor.information @ r)
         return total
 
-    def linearize(
-        self, poses: list[np.ndarray], weights: np.ndarray | None = None
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def linearize(self, poses: list[np.ndarray], weights: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
         """Build H and b, optionally with per-factor weights."""
         n = len(self.poses) * self.dof
         H = np.zeros((n, n))
@@ -116,7 +102,4 @@ class PoseGraph:
     def retract(self, poses: list[np.ndarray], delta: np.ndarray) -> list[np.ndarray]:
         """Apply T <- T exp(delta) pose by pose."""
         d = self.dof
-        return [
-            self.lie.compose(T, self.lie.exp(delta[k * d : (k + 1) * d]))
-            for k, T in enumerate(poses)
-        ]
+        return [self.lie.compose(T, self.lie.exp(delta[k * d : (k + 1) * d])) for k, T in enumerate(poses)]

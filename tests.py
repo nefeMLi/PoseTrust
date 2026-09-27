@@ -8,23 +8,9 @@ from posetrust import se2, se3
 from posetrust.covariance import cholesky_factor, selected_inverse
 from posetrust.graph import PoseGraph
 from posetrust.optimizer import free_mask, gauss_newton, levenberg_marquardt, solve_step
-from posetrust.robust import (
-    Cauchy,
-    DynamicCovarianceScaling,
-    GemanMcClure,
-    Huber,
-    Trivial,
-    irls,
-    loop_closure_indices,
-)
+from posetrust.robust import Cauchy, DynamicCovarianceScaling, GemanMcClure, Huber, Trivial, irls, loop_closure_indices
 from posetrust.robust_covariance import pull_bias, robust_covariances
-from posetrust.simulate import (
-    NoiseModel,
-    loop_closure_edges,
-    make_scenario,
-    monte_carlo,
-    sample_graph,
-)
+from posetrust.simulate import NoiseModel, loop_closure_edges, make_scenario, monte_carlo, sample_graph
 from posetrust.stats import CONSISTENT, consistency
 
 groups = pytest.mark.parametrize("lie", [se2, se3], ids=["SE2", "SE3"])
@@ -44,8 +30,8 @@ def hat(lie, xi):
 
 def random_xi(lie, rng, angle):
     xi = rng.normal(size=lie.DOF)
-    rotation = xi[lie.TRANSLATION_DOF:]
-    xi[lie.TRANSLATION_DOF:] = angle * rotation / np.linalg.norm(rotation)
+    rotation = xi[lie.TRANSLATION_DOF :]
+    xi[lie.TRANSLATION_DOF :] = angle * rotation / np.linalg.norm(rotation)
     return xi
 
 

@@ -50,9 +50,7 @@ class Huber:
 
     def curvature(self, s: np.ndarray) -> np.ndarray:
         s = np.asarray(s, dtype=float)
-        return np.where(
-            s <= self.delta**2, 0.0, -0.5 * self.delta * np.maximum(s, 1e-300) ** -1.5
-        )
+        return np.where(s <= self.delta**2, 0.0, -0.5 * self.delta * np.maximum(s, 1e-300) ** -1.5)
 
 
 @dataclass(frozen=True)
@@ -123,9 +121,7 @@ def squared_residuals(graph: PoseGraph, poses: list[np.ndarray]) -> np.ndarray:
 
 def loop_closure_indices(graph: PoseGraph) -> np.ndarray:
     """Indices of the factors that are not odometry."""
-    return np.array(
-        [k for k, f in enumerate(graph.factors) if f.j != f.i + 1], dtype=int
-    )
+    return np.array([k for k, f in enumerate(graph.factors) if f.j != f.i + 1], dtype=int)
 
 
 def _robust_mask(graph: PoseGraph, robust_factors: np.ndarray | None) -> np.ndarray:
@@ -137,9 +133,7 @@ def _robust_mask(graph: PoseGraph, robust_factors: np.ndarray | None) -> np.ndar
     return mask
 
 
-def factor_weights(
-    kernel, s: np.ndarray, mask: np.ndarray
-) -> np.ndarray:
+def factor_weights(kernel, s: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Kernel weights on the masked factors, 1 everywhere else."""
     weights = np.ones_like(s)
     if mask.any():
@@ -185,9 +179,7 @@ def irls(
     s = squared_residuals(graph, poses)
     weights = factor_weights(kernel, s, mask)
     H, _ = graph.linearize(poses, weights=weights)
-    return Result(
-        poses, robust_cost(kernel, s, mask), iterations, converged, H, anchor
-    )
+    return Result(poses, robust_cost(kernel, s, mask), iterations, converged, H, anchor)
 
 
 def graduated_non_convexity(

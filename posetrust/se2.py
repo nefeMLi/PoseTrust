@@ -26,9 +26,7 @@ def _ab(theta: float) -> tuple[float, float]:
     if abs(theta) < _EPS:
         t2 = theta**2
         a = 1.0 - t2 / 6.0 + t2**2 / 120.0 - t2**3 / 5040.0 + t2**4 / 362880.0
-        b = theta * (
-            0.5 - t2 / 24.0 + t2**2 / 720.0 - t2**3 / 40320.0 + t2**4 / 3628800.0
-        )
+        b = theta * (0.5 - t2 / 24.0 + t2**2 / 720.0 - t2**3 / 40320.0 + t2**4 / 3628800.0)
     else:
         a = np.sin(theta) / theta
         # 1 - cos(theta) == 2*sin(theta/2)**2 avoids the cancellation entirely
@@ -94,13 +92,7 @@ def right_jacobian(xi: np.ndarray) -> np.ndarray:
     a, b = _ab(theta)
     if abs(theta) < _EPS:
         t2 = theta**2
-        c = theta * (
-            1.0 / 6.0
-            - t2 / 120.0
-            + t2**2 / 5040.0
-            - t2**3 / 362880.0
-            + t2**4 / 39916800.0
-        )
+        c = theta * (1.0 / 6.0 - t2 / 120.0 + t2**2 / 5040.0 - t2**3 / 362880.0 + t2**4 / 39916800.0)
         d = 0.5 - t2 / 24.0 + t2**2 / 720.0 - t2**3 / 40320.0 + t2**4 / 3628800.0
     else:
         c = (theta - np.sin(theta)) / theta**2

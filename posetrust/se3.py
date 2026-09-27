@@ -23,13 +23,7 @@ TRANSLATION_DOF = 3
 def hat(v: np.ndarray) -> np.ndarray:
     """Skew-symmetric matrix of v."""
     v = np.asarray(v, dtype=float)
-    return np.array(
-        [
-            [0.0, -v[2], v[1]],
-            [v[2], 0.0, -v[0]],
-            [-v[1], v[0], 0.0],
-        ]
-    )
+    return np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
 
 
 def vee(M: np.ndarray) -> np.ndarray:
@@ -43,13 +37,7 @@ def _so3_coeffs(theta: float) -> tuple[float, float, float]:
         t2 = theta**2
         a = 1.0 - t2 / 6.0 + t2**2 / 120.0 - t2**3 / 5040.0 + t2**4 / 362880.0
         b = 0.5 - t2 / 24.0 + t2**2 / 720.0 - t2**3 / 40320.0 + t2**4 / 3628800.0
-        c = (
-            1.0 / 6.0
-            - t2 / 120.0
-            + t2**2 / 5040.0
-            - t2**3 / 362880.0
-            + t2**4 / 39916800.0
-        )
+        c = 1.0 / 6.0 - t2 / 120.0 + t2**2 / 5040.0 - t2**3 / 362880.0 + t2**4 / 39916800.0
     else:
         s = np.sin(theta)
         a = s / theta
@@ -63,13 +51,7 @@ def _v_inv_coeff(theta: float) -> float:
     """Coefficient of K^2 in the inverse SO(3) left Jacobian."""
     if abs(theta) < _EPS:
         t2 = theta**2
-        return (
-            1.0 / 12.0
-            + t2 / 720.0
-            + t2**2 / 30240.0
-            + t2**3 / 1209600.0
-            + t2**4 / 47900160.0
-        )
+        return 1.0 / 12.0 + t2 / 720.0 + t2**2 / 30240.0 + t2**3 / 1209600.0 + t2**4 / 47900160.0
     # Written with tan(theta/2): (1 + cos(theta)) cancels badly near pi.
     return 1.0 / theta**2 - 1.0 / (2.0 * theta * np.tan(0.5 * theta))
 
@@ -78,27 +60,9 @@ def _q_coeffs(theta: float) -> tuple[float, float, float]:
     """Coefficients of the SE(3) Q matrix (Barfoot & Furgale 2014)."""
     if abs(theta) < _EPS:
         t2 = theta**2
-        c1 = (
-            1.0 / 6.0
-            - t2 / 120.0
-            + t2**2 / 5040.0
-            - t2**3 / 362880.0
-            + t2**4 / 39916800.0
-        )
-        c2 = (
-            -1.0 / 24.0
-            + t2 / 720.0
-            - t2**2 / 40320.0
-            + t2**3 / 3628800.0
-            - t2**4 / 479001600.0
-        )
-        c3 = (
-            -1.0 / 60.0
-            + t2 / 1260.0
-            - t2**2 / 60480.0
-            + t2**3 / 4989600.0
-            - t2**4 / 622702080.0
-        )
+        c1 = 1.0 / 6.0 - t2 / 120.0 + t2**2 / 5040.0 - t2**3 / 362880.0 + t2**4 / 39916800.0
+        c2 = -1.0 / 24.0 + t2 / 720.0 - t2**2 / 40320.0 + t2**3 / 3628800.0 - t2**4 / 479001600.0
+        c3 = -1.0 / 60.0 + t2 / 1260.0 - t2**2 / 60480.0 + t2**3 / 4989600.0 - t2**4 / 622702080.0
     else:
         s = np.sin(theta)
         c1 = (theta - s) / theta**3
@@ -154,9 +118,7 @@ def _log_rotation(R: np.ndarray) -> np.ndarray:
     return s / a
 
 
-def _log_rotation_near_pi(
-    R: np.ndarray, cos_theta: float, theta: float, s: np.ndarray
-) -> np.ndarray:
+def _log_rotation_near_pi(R: np.ndarray, cos_theta: float, theta: float, s: np.ndarray) -> np.ndarray:
     """Rotation vector from the symmetric part, for angles near pi."""
     M = (R + R.T) / 2.0 - cos_theta * np.eye(3)  # = (1 - cos(theta)) a a^T
     k = int(np.argmax(np.diag(M)))

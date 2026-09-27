@@ -36,16 +36,8 @@ SEED = 100
 
 def condition(lie, density: float, n_runs: int) -> dict:
     """Run one density and summarise its calibration."""
-    scenario = make_scenario(
-        lie, n_poses=N_POSES, loop_density=density, seed=SEED, turn=TURN
-    )
-    result = monte_carlo(
-        lie,
-        scenario,
-        NoiseModel(np.full(lie.DOF, NOISE)),
-        n_runs=n_runs,
-        seed=SEED + 1,
-    )
+    scenario = make_scenario(lie, n_poses=N_POSES, loop_density=density, seed=SEED, turn=TURN)
+    result = monte_carlo(lie, scenario, NoiseModel(np.full(lie.DOF, NOISE)), n_runs=n_runs, seed=SEED + 1)
     closures = len(scenario.edges) - (N_POSES - 1)
     return {"density": density, "closures": closures, **calibration(result)}
 
@@ -91,25 +83,17 @@ def report_console(rows) -> None:
             continue
         falling = all(a >= b - 1e-9 for a, b in pairwise(ratios))
         sparsest, densest = ratios[0], ratios[-1]
-        print(
-            f"  {name}: sparse end {sparsest:.3f}, dense end {densest:.3f}, "
-            f"monotone {'yes' if falling else 'NO'}"
-        )
+        print(f"  {name}: sparse end {sparsest:.3f}, dense end {densest:.3f}, monotone {'yes' if falling else 'NO'}")
 
     # Print the interval widths next to the spread they would need to resolve.
     widths = [r["ci_high"] - r["ci_low"] for r in rows if r["usable"]]
-    spread = max(r["ratio"] for r in rows if r["usable"]) - min(
-        r["ratio"] for r in rows if r["usable"]
-    )
+    spread = max(r["ratio"] for r in rows if r["usable"]) - min(r["ratio"] for r in rows if r["usable"])
     covering = sum(r["ci_low"] <= 1.0 <= r["ci_high"] for r in rows if r["usable"])
     print(
         f"\n  Resolution: 95% intervals span {min(widths):.3f}-{max(widths):.3f}, "
         f"against a total spread of {spread:.3f} across the whole sweep."
     )
-    print(
-        f"  Differences below roughly {max(widths) / 2:.1%} of the state dimension "
-        f"are not resolvable here."
-    )
+    print(f"  Differences below roughly {max(widths) / 2:.1%} of the state dimension are not resolvable here.")
     print(f"  {covering} of {len(widths)} intervals cover perfect calibration.")
     print()
 
@@ -122,9 +106,7 @@ def build_figure():
 
     for index, (name, _) in enumerate(GROUPS):
         ax = axes[index]
-        series = sorted(
-            (r for r in rows if r["group"] == name), key=lambda r: r["density"]
-        )
+        series = sorted((r for r in rows if r["group"] == name), key=lambda r: r["density"])
         ratio = np.array([r["ratio"] for r in series])
         ci_low = np.array([r["ci_low"] for r in series])
         ci_high = np.array([r["ci_high"] for r in series])
@@ -139,9 +121,7 @@ def build_figure():
             linewidth=0,
             label="chi-squared acceptance band",
         )
-        ax.axhline(
-            1.0, color=INK_MUTED, linewidth=2.0, linestyle="--", label="calibrated"
-        )
+        ax.axhline(1.0, color=INK_MUTED, linewidth=2.0, linestyle="--", label="calibrated")
         ax.errorbar(
             x,
             ratio,

@@ -15,9 +15,7 @@ from posetrust.robust import Trivial
 NAMES = ("naive", "sandwich", "expected", "inlier")
 
 
-def whitened_factors(
-    graph: PoseGraph, poses: list[np.ndarray], anchor: int
-) -> tuple[np.ndarray, np.ndarray]:
+def whitened_factors(graph: PoseGraph, poses: list[np.ndarray], anchor: int) -> tuple[np.ndarray, np.ndarray]:
     """Whitened residuals e (m, d) and Jacobians J (m, d, n) over the free state."""
     d = graph.dof
     n = len(poses) * d
@@ -62,12 +60,7 @@ def noise_model_terms(kernel, dof: int) -> tuple[float, float]:
 
 
 def robust_covariances(
-    graph: PoseGraph,
-    poses: list[np.ndarray],
-    kernel,
-    robust_factors: np.ndarray,
-    threshold: float,
-    anchor: int = 0,
+    graph: PoseGraph, poses: list[np.ndarray], kernel, robust_factors: np.ndarray, threshold: float, anchor: int = 0
 ) -> dict[str, np.ndarray | None]:
     """Free-state covariances of one converged robust estimate.
 
@@ -114,12 +107,7 @@ def robust_covariances(
 
 
 def pull_bias(
-    graph: PoseGraph,
-    poses: list[np.ndarray],
-    kernel,
-    robust_factors: np.ndarray,
-    threshold: float,
-    anchor: int = 0,
+    graph: PoseGraph, poses: list[np.ndarray], kernel, robust_factors: np.ndarray, threshold: float, anchor: int = 0
 ) -> tuple[np.ndarray, np.ndarray]:
     """Shift of a robust estimate caused by the robust factors above threshold.
 

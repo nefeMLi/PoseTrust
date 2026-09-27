@@ -58,9 +58,7 @@ COLOURS = {"naive": INK_MUTED, "e6": "#2a78d6", "refit": "#eb6834"}
 
 
 def errors_of(poses, truth) -> np.ndarray:
-    return np.concatenate(
-        [tangent_error(LIE, poses[k], truth[k]) for k in range(N_POSES) if k != ANCHOR]
-    )
+    return np.concatenate([tangent_error(LIE, poses[k], truth[k]) for k in range(N_POSES) if k != ANCHOR])
 
 
 def without(graph: PoseGraph, drop) -> PoseGraph:
@@ -73,9 +71,7 @@ def without(graph: PoseGraph, drop) -> PoseGraph:
 def condition(method: int, rate: float, seed: int, turn: float, n_runs: int) -> list[dict]:
     """One back-end at one outlier rate: naive, E6 and reject-and-refit on the same runs."""
     name, kernel = METHODS[method]
-    scenario = make_scenario(
-        LIE, n_poses=N_POSES, loop_density=LOOP_DENSITY, outlier_rate=rate, seed=seed, turn=turn
-    )
+    scenario = make_scenario(LIE, n_poses=N_POSES, loop_density=LOOP_DENSITY, outlier_rate=rate, seed=seed, turn=turn)
     noise = NoiseModel(np.full(LIE.DOF, NOISE))
     free = free_mask(N_POSES, LIE.DOF, ANCHOR)
     nees = {c: np.full(n_runs, np.nan) for c in ESTIMATORS}
@@ -94,9 +90,7 @@ def condition(method: int, rate: float, seed: int, turn: float, n_runs: int) -> 
         sq_error["naive"][r] = np.mean(error**2)
         closures = loop_closure_indices(graph)
         for q in QUANTILES:
-            shift, pulled = pull_bias(
-                graph, result.poses, kernel, closures, chi2.ppf(q, LIE.DOF), anchor=ANCHOR
-            )
+            shift, pulled = pull_bias(graph, result.poses, kernel, closures, chi2.ppf(q, LIE.DOF), anchor=ANCHOR)
             covariance = np.linalg.inv(information) + np.outer(shift, shift)
             nees[f"e6_{q}"][r] = error @ np.linalg.solve(covariance, error)
             sq_error[f"e6_{q}"][r] = sq_error["naive"][r]
@@ -116,13 +110,10 @@ def condition(method: int, rate: float, seed: int, turn: float, n_runs: int) -> 
     rows = []
     for c in ESTIMATORS:
         used = np.isfinite(nees[c])
-        stats = calibration(
-            SimpleNamespace(converged=used, n_runs=n_runs, nees_full=nees[c], free_dof=dof)
-        )
+        stats = calibration(SimpleNamespace(converged=used, n_runs=n_runs, nees_full=nees[c], free_dof=dof))
         rms = float(np.sqrt(np.mean(sq_error[c][used]))) if used.any() else float("nan")
         rows.append(
-            {"graph": seed, "turn": turn, "method": name, "rate": rate, "estimator": c,
-             "rms_error": rms, **stats}
+            {"graph": seed, "turn": turn, "method": name, "rate": rate, "estimator": c, "rms_error": rms, **stats}
         )
     return rows
 
@@ -197,9 +188,7 @@ def report(rows) -> None:
 
     print(f"\n  Threshold rule: Huber E6, mean |NEES/dof - 1| at rates >= {JUDGED_RATE:g}")
     for quantile in QUANTILES:
-        judged = [
-            r for r in select(rows, method="Huber", estimator=f"e6_{quantile}") if r["rate"] >= JUDGED_RATE
-        ]
+        judged = [r for r in select(rows, method="Huber", estimator=f"e6_{quantile}") if r["rate"] >= JUDGED_RATE]
         mark = "  <- used" if quantile == q else ""
         print(f"  q = {quantile:<6} {np.mean([abs(r['ratio'] - 1) for r in judged]):.3f}{mark}")
 
@@ -217,8 +206,10 @@ def report(rows) -> None:
     e6, refit = f"e6_{q}", f"refit_{q}"
     low, high = PRACTICAL
     print(f"\n  H7a: Huber under E6 within [{low}, {high}] at every rate >= {JUDGED_RATE:g} (need 6)")
-    print(f"  practical {sum(every_rate(rows, g, 'Huber', e6, within) for g in gs)}/{n}; "
-          f"strict {sum(every_rate(rows, g, 'Huber', e6, calibrated) for g in gs)}/{n}")
+    print(
+        f"  practical {sum(every_rate(rows, g, 'Huber', e6, within) for g in gs)}/{n}; "
+        f"strict {sum(every_rate(rows, g, 'Huber', e6, calibrated) for g in gs)}/{n}"
+    )
     print(f"  naive, for comparison: practical {sum(every_rate(rows, g, 'Huber', 'naive', within) for g in gs)}/{n}")
 
     at_zero = [r for r in select(rows, method="Huber", rate=0.0, estimator=e6)]
@@ -233,10 +224,14 @@ def report(rows) -> None:
         return all(abs(a["ratio"] - b["ratio"]) < 0.05 for a, b in pairs)
 
     print(f"\n  H7c: DCS changed by less than 0.05 at every rate: {sum(unchanged(g) for g in gs)}/{n}")
-    print(f"\n  Exploratory, E6 with the converged refit's shift: within [{low}, {high}] at every rate "
-          f">= {JUDGED_RATE:g}: {sum(every_rate(rows, g, 'Huber', f'e6full_{q}', within) for g in gs)}/{n}")
-    print(f"\n  H7d: reject-and-refit within [{low}, {high}] at every rate >= {JUDGED_RATE:g}: "
-          f"{sum(every_rate(rows, g, 'Huber', refit, within) for g in gs)}/{n}")
+    print(
+        f"\n  Exploratory, E6 with the converged refit's shift: within [{low}, {high}] at every rate "
+        f">= {JUDGED_RATE:g}: {sum(every_rate(rows, g, 'Huber', f'e6full_{q}', within) for g in gs)}/{n}"
+    )
+    print(
+        f"\n  H7d: reject-and-refit within [{low}, {high}] at every rate >= {JUDGED_RATE:g}: "
+        f"{sum(every_rate(rows, g, 'Huber', refit, within) for g in gs)}/{n}"
+    )
     print()
 
 
@@ -253,10 +248,18 @@ def build_figure(split: str):
         ("e6", f"e6_{q}", "E6: naive plus estimated pull"),
         ("refit", f"refit_{q}", "reject and refit"),
     ):
-        per_rate = [np.array([r["ratio"] for r in select(rows, method="Huber", rate=x, estimator=estimator)]) for x in rates]
+        per_rate = [
+            np.array([r["ratio"] for r in select(rows, method="Huber", rate=x, estimator=estimator)]) for x in rates
+        ]
         median = np.array([np.nanmedian(v) for v in per_rate])
-        ax.fill_between(rates, [np.nanmin(v) for v in per_rate], [np.nanmax(v) for v in per_rate],
-                        color=COLOURS[kind], alpha=0.15, linewidth=0)
+        ax.fill_between(
+            rates,
+            [np.nanmin(v) for v in per_rate],
+            [np.nanmax(v) for v in per_rate],
+            color=COLOURS[kind],
+            alpha=0.15,
+            linewidth=0,
+        )
         ax.plot(rates, median, marker="o", markersize=5, linewidth=2.0, color=COLOURS[kind], label=name)
     ax.set_yscale("log")
     ax.set_xticks(rates, [f"{x:g}" for x in rates])

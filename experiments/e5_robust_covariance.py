@@ -71,23 +71,14 @@ def solve(name: str, kernel, graph, start):
     if name == "plain least squares":
         return gauss_newton(graph, start, anchor=ANCHOR)
     if name == "GNC":
-        return graduated_non_convexity(
-            graph, start, c=DELTA, anchor=ANCHOR, robust_factors=closures
-        )
+        return graduated_non_convexity(graph, start, c=DELTA, anchor=ANCHOR, robust_factors=closures)
     return irls(graph, start, kernel, anchor=ANCHOR, robust_factors=closures)
 
 
 def condition(method: int, rate: float, seed: int, n_runs: int) -> list[dict]:
     """One back-end at one outlier rate, with every covariance on the same runs."""
     name, kernel = METHODS[method]
-    scenario = make_scenario(
-        LIE,
-        n_poses=N_POSES,
-        loop_density=LOOP_DENSITY,
-        outlier_rate=rate,
-        seed=seed,
-        turn=TURN,
-    )
+    scenario = make_scenario(LIE, n_poses=N_POSES, loop_density=LOOP_DENSITY, outlier_rate=rate, seed=seed, turn=TURN)
     noise = NoiseModel(np.full(LIE.DOF, NOISE))
     false = {k for k, edge in enumerate(scenario.edges) if edge in scenario.outliers}
 
@@ -107,18 +98,12 @@ def condition(method: int, rate: float, seed: int, n_runs: int) -> list[dict]:
             continue
         solved[r] = True
         errors[r] = np.concatenate(
-            [
-                tangent_error(LIE, result.poses[k], scenario.truth[k])
-                for k in range(N_POSES)
-                if k != ANCHOR
-            ]
+            [tangent_error(LIE, result.poses[k], scenario.truth[k]) for k in range(N_POSES) if k != ANCHOR]
         )
         closures = loop_closure_indices(graph)
         s = squared_residuals(graph, result.poses)
         exact[r] = {int(k) for k in closures if s[k] > THRESHOLD} == false
-        covariances = robust_covariances(
-            graph, result.poses, kernel, closures, THRESHOLD, anchor=ANCHOR
-        )
+        covariances = robust_covariances(graph, result.poses, kernel, closures, THRESHOLD, anchor=ANCHOR)
         for c, cov in covariances.items():
             if cov is not None:
                 inverses[c][r] = np.linalg.inv(cov)
@@ -136,13 +121,9 @@ def condition(method: int, rate: float, seed: int, n_runs: int) -> list[dict]:
         bias = float("nan")
         if used.any():
             mean_error = errors[used].mean(axis=0)
-            bias = float(
-                np.mean([mean_error @ inverses[c][r] @ mean_error for r in np.flatnonzero(used)])
-            )
+            bias = float(np.mean([mean_error @ inverses[c][r] @ mean_error for r in np.flatnonzero(used)]))
         dof = errors.shape[1]
-        stats = calibration(
-            SimpleNamespace(converged=used, n_runs=n_runs, nees_full=nees, free_dof=dof)
-        )
+        stats = calibration(SimpleNamespace(converged=used, n_runs=n_runs, nees_full=nees, free_dof=dof))
         rows.append(
             {
                 "graph": seed,
@@ -225,9 +206,7 @@ def report(rows) -> None:
         for rate in OUTLIER_RATES:
             cells = []
             for c in names:
-                ratios = np.array(
-                    [r["ratio"] for r in select(rows, method=method, rate=rate, covariance=c)]
-                )
+                ratios = np.array([r["ratio"] for r in select(rows, method=method, rate=rate, covariance=c)])
                 cells.append(
                     f"{np.nanmedian(ratios):8.2f} [{np.nanmin(ratios):5.2f},{np.nanmax(ratios):5.2f}]"
                     if np.isfinite(ratios).any()
@@ -239,9 +218,7 @@ def report(rows) -> None:
     print(f"\n  H6a: bias term against excess NEES, Huber naive, rates >= {JUDGED_RATE:g}")
     for rate in judged:
         level = select(rows, method="Huber", rate=rate, covariance="naive")
-        share = [
-            r["bias_ratio"] / (r["ratio"] - 1.0) for r in level if r["ratio"] > 1.0
-        ]
+        share = [r["bias_ratio"] / (r["ratio"] - 1.0) for r in level if r["ratio"] > 1.0]
         mostly = sum(s > 0.5 for s in share)
         print(
             f"  rate {rate:.2f}: bias share of excess, median {np.median(share):.2f}; "
@@ -285,8 +262,7 @@ def report(rows) -> None:
     print("\n  H6d: Cauchy and GNC at 0% outliers, calibrated layouts")
     for method in ("Cauchy", "GNC"):
         cells = ", ".join(
-            f"{c} {sum(calibrated(r) for r in select(rows, method=method, rate=0.0, covariance=c))}/{n}"
-            for c in names
+            f"{c} {sum(calibrated(r) for r in select(rows, method=method, rate=0.0, covariance=c))}/{n}" for c in names
         )
         print(f"  {method:<7} {cells}")
     print()
@@ -299,10 +275,7 @@ def build_figure(split: str):
     rates = np.array(OUTLIER_RATES)
 
     for c, colour in COVARIANCE_COLOURS.items():
-        per_rate = [
-            np.array([r["ratio"] for r in select(rows, method="Huber", rate=x, covariance=c)])
-            for x in rates
-        ]
+        per_rate = [np.array([r["ratio"] for r in select(rows, method="Huber", rate=x, covariance=c)]) for x in rates]
         if not any(np.isfinite(v).any() for v in per_rate):
             continue
         median = np.array([np.nanmedian(v) if np.isfinite(v).any() else np.nan for v in per_rate])
@@ -330,8 +303,9 @@ def build_figure(split: str):
     right.set_xscale("log")
     right.set_yscale("log")
     label(right, "Bias term against excess, per layout (naive)", "excess NEES / dof", "bias term / dof")
-    right.legend(frameon=False, fontsize=8, labelcolor=INK_MUTED, loc="upper left", title="outlier rate",
-                 title_fontsize=8)
+    right.legend(
+        frameon=False, fontsize=8, labelcolor=INK_MUTED, loc="upper left", title="outlier rate", title_fontsize=8
+    )
 
     title(fig, f"E5 ({split} layouts): no covariance fixes Huber, because its error is bias")
     return fig

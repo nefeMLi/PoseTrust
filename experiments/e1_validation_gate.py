@@ -8,17 +8,7 @@ import sys
 import numpy as np
 from scipy.stats import chi2
 
-from experiments.common import (
-    INK,
-    INK_MUTED,
-    OBSERVED,
-    figure,
-    label,
-    read_results,
-    save_figures,
-    title,
-    write_results,
-)
+from experiments.common import INK, INK_MUTED, OBSERVED, figure, label, read_results, save_figures, title, write_results
 from posetrust import se2, se3
 from posetrust.covariance import marginal_covariances, relative_covariance
 from posetrust.graph import PoseGraph
@@ -48,19 +38,9 @@ def exactness(lie) -> dict:
     H, _ = graph.linearize(graph.poses)
 
     marginals = marginal_covariances(H, anchor=0, dof=dof)
-    marginal_error = max(
-        float(np.max(np.abs(block - k * omega_inv)))
-        for k, block in enumerate(marginals)
-    )
+    marginal_error = max(float(np.max(np.abs(block - k * omega_inv))) for k, block in enumerate(marginals))
     relative_error = max(
-        float(
-            np.max(
-                np.abs(
-                    relative_covariance(lie, H, graph.poses, i, j, anchor=0)
-                    - (j - i) * omega_inv
-                )
-            )
-        )
+        float(np.max(np.abs(relative_covariance(lie, H, graph.poses, i, j, anchor=0) - (j - i) * omega_inv)))
         for i, j in [(0, 1), (2, 6), (1, 7), (3, 4)]
     )
     worst = max(marginal_error, relative_error)
@@ -77,13 +57,9 @@ def exactness(lie) -> dict:
 def nees_check(lie, sigma: float, n_runs: int):
     """Monte Carlo NEES against the chi-squared band."""
     scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=1, turn=0.05)
-    result = monte_carlo(
-        lie, scenario, NoiseModel(np.full(lie.DOF, sigma)), n_runs=n_runs, seed=7
-    )
+    result = monte_carlo(lie, scenario, NoiseModel(np.full(lie.DOF, sigma)), n_runs=n_runs, seed=7)
     converged = result.converged
-    report = ConsistencyReport(
-        result.nees_full[converged], result.free_dof, alpha=GATE_ALPHA
-    )
+    report = ConsistencyReport(result.nees_full[converged], result.free_dof, alpha=GATE_ALPHA)
     low, high = report.acceptance
     nominal, empirical = report.coverage()
     summary = {
@@ -103,8 +79,7 @@ def nees_check(lie, sigma: float, n_runs: int):
         "passed": bool(low <= report.mean <= high and converged.all()),
     }
     samples = [
-        {"group": None, "sigma": sigma, "run": i, "nees": float(v)}
-        for i, v in enumerate(result.nees_full[converged])
+        {"group": None, "sigma": sigma, "run": i, "nees": float(v)} for i, v in enumerate(result.nees_full[converged])
     ]
     return summary, samples
 
@@ -144,10 +119,7 @@ def report_console(exact_rows, nees_rows) -> bool:
         )
 
     print(f"\nConsistency: mean NEES against the chi-squared band (alpha={GATE_ALPHA})")
-    print(
-        f"  {'group':<8} {'sigma':>8} {'dof':>5} {'conv':>8} {'mean':>9} "
-        f"{'ratio':>7} {'band':>17} {'p':>8}  result"
-    )
+    print(f"  {'group':<8} {'sigma':>8} {'dof':>5} {'conv':>8} {'mean':>9} {'ratio':>7} {'band':>17} {'p':>8}  result")
     for row in nees_rows:
         band = f"[{row['band_low']:.2f}, {row['band_high']:.2f}]"
         print(
@@ -157,9 +129,7 @@ def report_console(exact_rows, nees_rows) -> bool:
             f"{'PASS' if row['passed'] else 'FAIL'}"
         )
 
-    passed = all(r["passed"] for r in exact_rows) and all(
-        r["passed"] for r in nees_rows
-    )
+    passed = all(r["passed"] for r in exact_rows) and all(r["passed"] for r in nees_rows)
     print("\n" + "=" * 74)
     print("E1 GATE: PASS" if passed else "E1 GATE: FAIL")
     if not passed:
@@ -175,50 +145,19 @@ def build_figure():
 
     fig, axes = figure(nrows=2, ncols=2, size=(10.0, 7.0))
     for row_index, (name, _) in enumerate(GROUPS):
-        summary = next(
-            s
-            for s in summaries
-            if s["group"] == name and s["sigma"] == HEADLINE_NOISE
-        )
-        values = np.array(
-            [
-                s["nees"]
-                for s in samples
-                if s["group"] == name and s["sigma"] == HEADLINE_NOISE
-            ]
-        )
+        summary = next(s for s in summaries if s["group"] == name and s["sigma"] == HEADLINE_NOISE)
+        values = np.array([s["nees"] for s in samples if s["group"] == name and s["sigma"] == HEADLINE_NOISE])
         dof = summary["dof"]
 
         # Left: does the NEES distribution match the chi-squared it should be?
         ax = axes[row_index][0]
-        ax.hist(
-            values,
-            bins=20,
-            density=True,
-            color=OBSERVED,
-            alpha=0.85,
-            label="observed",
-        )
+        ax.hist(values, bins=20, density=True, color=OBSERVED, alpha=0.85, label="observed")
         grid = np.linspace(max(0.0, values.min() * 0.6), values.max() * 1.15, 400)
-        ax.plot(
-            grid,
-            chi2(dof).pdf(grid),
-            color=INK_MUTED,
-            linewidth=2.0,
-            linestyle="--",
-            label=f"chi-squared({dof})",
-        )
-        ax.axvline(
-            dof,
-            color=INK_MUTED,
-            linewidth=1.0,
-            alpha=0.6,
-            label=f"expected mean = {dof}",
-        )
+        ax.plot(grid, chi2(dof).pdf(grid), color=INK_MUTED, linewidth=2.0, linestyle="--", label=f"chi-squared({dof})")
+        ax.axvline(dof, color=INK_MUTED, linewidth=1.0, alpha=0.6, label=f"expected mean = {dof}")
         label(
             ax,
-            f"{name} - NEES distribution    "
-            f"mean/dof {summary['ratio']:.4f}, {summary['verdict']}",
+            f"{name} - NEES distribution    mean/dof {summary['ratio']:.4f}, {summary['verdict']}",
             "NEES",
             "density",
         )
@@ -229,18 +168,8 @@ def build_figure():
         ax = axes[row_index][1]
         nominal = np.array(summary["coverage_nominal"])
         empirical = np.array(summary["coverage_empirical"])
-        ax.plot(
-            [0, 1], [0, 1], color=INK_MUTED, linewidth=2.0, linestyle="--", label="ideal"
-        )
-        ax.plot(
-            nominal,
-            empirical,
-            marker="o",
-            markersize=8,
-            linewidth=2.0,
-            color=OBSERVED,
-            label="observed",
-        )
+        ax.plot([0, 1], [0, 1], color=INK_MUTED, linewidth=2.0, linestyle="--", label="ideal")
+        ax.plot(nominal, empirical, marker="o", markersize=8, linewidth=2.0, color=OBSERVED, label="observed")
         ax.set_xlim(0.4, 1.02)
         ax.set_ylim(0.4, 1.02)
         label(ax, f"{name} - ellipsoid coverage", "nominal level", "empirical coverage")
@@ -265,9 +194,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=300)
     parser.add_argument(
-        "--figures-only",
-        action="store_true",
-        help="regenerate figures from stored results without re-running",
+        "--figures-only", action="store_true", help="regenerate figures from stored results without re-running"
     )
     args = parser.parse_args()
 

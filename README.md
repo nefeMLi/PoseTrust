@@ -205,9 +205,7 @@ From the project folder:
 python -m experiments.e1_validation_gate
 python -m experiments.e2_loop_closure_density
 python -m experiments.e3_nonlinearity
-python -m experiments.e3_nonlinearity --graphs
 python -m experiments.e4_perceptual_aliasing
-python -m experiments.e4_perceptual_aliasing --graphs
 python -m experiments.e5_robust_covariance --split dev
 python -m experiments.e5_robust_covariance --split test
 python -m experiments.e6_bias_aware_covariance --split dev
@@ -216,10 +214,10 @@ python -m experiments.e6_bias_aware_covariance --split test
 
 Each script writes its results to `results/` and its figure to `figures/`.
 Add `--figures-only` to redraw a figure from the saved results in seconds.
-E1 takes about a minute, E2 about ten, E3 up to an hour. The rest run in
-parallel; on twelve cores E3 `--graphs` takes about six minutes, E4 about
-twenty and E4 `--graphs` a few hours, most of it plain least squares, which
-on some layouts never converges and runs to its iteration limit. Each E5 split
+E3 and E4 run every layout, the original graph included. E1 takes about a
+minute and E2 about ten. The rest run in parallel; on twelve cores E3 takes
+about six minutes and E4 a few hours, most of it plain least squares, which on
+some layouts never converges and runs to its iteration limit. Each E5 split
 takes about two hours, each E6 split about twenty minutes.
 
 The core checks run with `pytest tests.py`.

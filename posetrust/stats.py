@@ -30,14 +30,10 @@ def nees(error: np.ndarray, covariance: np.ndarray) -> float:
 
 def nees_series(errors: np.ndarray, covariances: np.ndarray) -> np.ndarray:
     """NEES for each run."""
-    return np.array(
-        [nees(e, S) for e, S in zip(np.asarray(errors), np.asarray(covariances))]
-    )
+    return np.array([nees(e, S) for e, S in zip(np.asarray(errors), np.asarray(covariances))])
 
 
-def nees_by_dof(
-    lie, errors: np.ndarray, covariances: np.ndarray
-) -> dict[str, np.ndarray]:
+def nees_by_dof(lie, errors: np.ndarray, covariances: np.ndarray) -> dict[str, np.ndarray]:
     """NEES split into translation and rotation parts."""
     errors = np.asarray(errors)
     covariances = np.asarray(covariances)
@@ -98,14 +94,10 @@ class ConsistencyReport:
         lower = chi2.cdf(self.values.sum(), self.values.size * self.dof)
         return float(2.0 * min(lower, 1.0 - lower))
 
-    def coverage(
-        self, levels: tuple[float, ...] = (0.5, 0.9, 0.95, 0.99)
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def coverage(self, levels: tuple[float, ...] = (0.5, 0.9, 0.95, 0.99)) -> tuple[np.ndarray, np.ndarray]:
         """Empirical against nominal ellipsoid coverage."""
         nominal = np.asarray(levels, dtype=float)
-        empirical = np.array(
-            [float(np.mean(self.values <= chi2.ppf(p, self.dof))) for p in nominal]
-        )
+        empirical = np.array([float(np.mean(self.values <= chi2.ppf(p, self.dof))) for p in nominal])
         return nominal, empirical
 
 
@@ -119,9 +111,7 @@ class Report:
     @property
     def nees(self) -> ConsistencyReport:
         """Full-state NEES."""
-        return ConsistencyReport(
-            self.result.nees_full, self.result.free_dof, self.alpha
-        )
+        return ConsistencyReport(self.result.nees_full, self.result.free_dof, self.alpha)
 
     @property
     def verdict(self) -> str:

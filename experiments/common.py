@@ -36,9 +36,7 @@ def bootstrap_interval(values: np.ndarray) -> tuple[float, float]:
     """95% bootstrap interval for the mean, resampling runs."""
     values = np.ascontiguousarray(values, dtype=float)
     rng = np.random.default_rng(np.frombuffer(values.tobytes(), dtype=np.uint32))
-    boot = rng.choice(
-        values, size=(BOOTSTRAP_RESAMPLES, values.size), replace=True
-    ).mean(axis=1)
+    boot = rng.choice(values, size=(BOOTSTRAP_RESAMPLES, values.size), replace=True).mean(axis=1)
     low, high = np.percentile(boot, [2.5, 97.5])
     return float(low), float(high)
 
@@ -61,11 +59,7 @@ def calibration(result) -> dict:
         return {
             "dof": int(result.free_dof),
             **counts,
-            **dict.fromkeys(
-                ("mean_nees", "ratio", "band_low", "band_high", "ci_low",
-                 "ci_high", "pvalue"),
-                nan,
-            ),
+            **dict.fromkeys(("mean_nees", "ratio", "band_low", "band_high", "ci_low", "ci_high", "pvalue"), nan),
             "verdict": "convergence failure",
         }
     report = ConsistencyReport(values, result.free_dof, ALPHA)
@@ -113,21 +107,13 @@ def mark_fdr(rows: list[dict], by: tuple[str, ...] = ()) -> None:
 
 def survivorship_warning(rows: list[dict], describe) -> None:
     """Flag usable conditions that lost enough runs to be biased."""
-    suspect = [
-        r for r in rows if r["usable"] and r["converged_fraction"] < SURVIVORSHIP_FRACTION
-    ]
+    suspect = [r for r in rows if r["usable"] and r["converged_fraction"] < SURVIVORSHIP_FRACTION]
     if not suspect:
         return
-    print(
-        f"\n  Survivorship warning: these dropped more than "
-        f"{1 - SURVIVORSHIP_FRACTION:.0%} of runs, so"
-    )
+    print(f"\n  Survivorship warning: these dropped more than {1 - SURVIVORSHIP_FRACTION:.0%} of runs, so")
     print("  their ratios are biased towards calibration and are lower bounds:")
     for row in suspect:
-        print(
-            f"    {describe(row)}: {row['converged']}/{row['n_runs']} converged, "
-            f"ratio {row['ratio']:.1f}"
-        )
+        print(f"    {describe(row)}: {row['converged']}/{row['n_runs']} converged, ratio {row['ratio']:.1f}")
 
 
 def write_results(rows: list[dict], name: str) -> Path:
@@ -143,13 +129,7 @@ def read_results(name: str):
     return pq.read_table(RESULTS_DIR / f"{name}.parquet").to_pylist()
 
 
-def figure(
-    nrows: int = 1,
-    ncols: int = 1,
-    size=(9.0, 4.2),
-    sharey: bool = False,
-    sharex: bool = False,
-):
+def figure(nrows: int = 1, ncols: int = 1, size=(9.0, 4.2), sharey: bool = False, sharex: bool = False):
     """Empty figure in the shared chart style."""
     fig = Figure(figsize=size, facecolor=SURFACE, layout="constrained")
     axes = fig.subplots(nrows, ncols, sharey=sharey, sharex=sharex)
@@ -209,13 +189,7 @@ def title(fig, text: str) -> None:
 def legend_below(fig, handles, labels, ncols: int) -> None:
     """One legend under all panels."""
     fig.legend(
-        handles,
-        labels,
-        loc="outside lower center",
-        ncols=ncols,
-        frameon=False,
-        fontsize=8.5,
-        labelcolor=INK_MUTED,
+        handles, labels, loc="outside lower center", ncols=ncols, frameon=False, fontsize=8.5, labelcolor=INK_MUTED
     )
 
 
@@ -232,3 +206,21 @@ def label(ax, title: str, xlabel: str = "", ylabel: str = "") -> None:
     ax.set_title(title, color=INK, fontsize=10.5, loc="left", pad=8)
     ax.set_xlabel(xlabel, color=INK_MUTED, fontsize=9)
     ax.set_ylabel(ylabel, color=INK_MUTED, fontsize=9)
+
+
+def layout_lines(ax, series: dict, x, original, colour=OBSERVED, sizes=(6, 4)) -> None:
+    """One line per layout, the original graph highlighted, the rest muted."""
+    for seed, y in series.items():
+        first = seed == original
+        ax.plot(
+            x,
+            y,
+            marker="o",
+            markersize=sizes[0] if first else sizes[1],
+            linewidth=2.0 if first else 1.2,
+            color=colour if first else INK_MUTED,
+            alpha=1.0 if first else 0.45,
+            zorder=3 if first else 2,
+            label="original graph" if first else None,
+        )
+    ax.plot([], [], color=INK_MUTED, alpha=0.45, linewidth=1.2, label="other layouts")

@@ -33,9 +33,7 @@ class Result:
     anchor: int
 
 
-def solve_step(
-    H: np.ndarray, b: np.ndarray, free: np.ndarray, damping: float = 0.0
-) -> np.ndarray:
+def solve_step(H: np.ndarray, b: np.ndarray, free: np.ndarray, damping: float = 0.0) -> np.ndarray:
     """Solve (H + damping diag(H)) delta = -b over the free poses."""
     Hf = H[np.ix_(free, free)]
     if damping > 0.0:
