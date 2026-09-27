@@ -193,10 +193,6 @@ def calibrated(row) -> bool:
     return row["usable"] and not row["significant_after_fdr"]
 
 
-def overconfident(row) -> bool:
-    return row["usable"] and row["significant_after_fdr"] and row["ratio"] > 1.0
-
-
 def select(rows, **match):
     return [r for r in rows if all(r[k] == v for k, v in match.items())]
 

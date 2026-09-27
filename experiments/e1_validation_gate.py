@@ -74,7 +74,7 @@ def exactness(lie) -> dict:
     }
 
 
-def consistency(lie, sigma: float, n_runs: int):
+def nees_check(lie, sigma: float, n_runs: int):
     """Monte Carlo NEES against the chi-squared band."""
     scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=1, turn=0.05)
     result = monte_carlo(
@@ -118,7 +118,7 @@ def run(n_runs: int) -> bool:
         exact_rows.append(row)
 
         for sigma in NOISE_LEVELS:
-            summary, samples = consistency(lie, sigma, n_runs)
+            summary, samples = nees_check(lie, sigma, n_runs)
             summary["group"] = name
             nees_rows.append(summary)
             for s in samples:
