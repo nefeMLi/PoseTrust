@@ -1,4 +1,8 @@
-"""Robust kernels, IRLS and graduated non-convexity."""
+"""Robust kernels, IRLS and graduated non-convexity.
+
+Each kernel gives rho(s) as cost, rho'(s) as weight and rho''(s) as curvature,
+with s the squared Mahalanobis residual.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +30,9 @@ class Trivial:
     def cost(self, s: np.ndarray) -> np.ndarray:
         return s
 
+    def curvature(self, s: np.ndarray) -> np.ndarray:
+        return np.zeros_like(s)
+
 
 @dataclass(frozen=True)
 class Huber:
@@ -41,6 +48,12 @@ class Huber:
         s = np.asarray(s, dtype=float)
         return np.where(s <= self.delta**2, s, 2.0 * self.delta * np.sqrt(s) - self.delta**2)
 
+    def curvature(self, s: np.ndarray) -> np.ndarray:
+        s = np.asarray(s, dtype=float)
+        return np.where(
+            s <= self.delta**2, 0.0, -0.5 * self.delta * np.maximum(s, 1e-300) ** -1.5
+        )
+
 
 @dataclass(frozen=True)
 class Cauchy:
@@ -53,6 +66,9 @@ class Cauchy:
 
     def cost(self, s: np.ndarray) -> np.ndarray:
         return self.c**2 * np.log1p(np.asarray(s, dtype=float) / self.c**2)
+
+    def curvature(self, s: np.ndarray) -> np.ndarray:
+        return -1.0 / (self.c**2 * (1.0 + np.asarray(s, dtype=float) / self.c**2) ** 2)
 
 
 @dataclass(frozen=True)
@@ -71,6 +87,10 @@ class DynamicCovarianceScaling:
         s = np.asarray(s, dtype=float)
         return np.where(s <= self.phi, s, 3.0 * self.phi - 4.0 * self.phi**2 / (self.phi + s))
 
+    def curvature(self, s: np.ndarray) -> np.ndarray:
+        s = np.asarray(s, dtype=float)
+        return np.where(s <= self.phi, 0.0, -8.0 * self.phi**2 / (self.phi + s) ** 3)
+
 
 @dataclass(frozen=True)
 class GemanMcClure:
@@ -87,6 +107,10 @@ class GemanMcClure:
         a = self.mu * self.c**2
         s = np.asarray(s, dtype=float)
         return a * s / (s + a)
+
+    def curvature(self, s: np.ndarray) -> np.ndarray:
+        a = self.mu * self.c**2
+        return -2.0 * a**2 / (np.asarray(s, dtype=float) + a) ** 3
 
 
 def squared_residuals(graph: PoseGraph, poses: list[np.ndarray]) -> np.ndarray:

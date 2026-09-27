@@ -1,4 +1,4 @@
-"""Core checks: Lie maths, Jacobians, covariances and a calibrated case."""
+"""Core checks: Lie maths, Jacobians, covariances, kernels and a calibrated case."""
 
 import numpy as np
 import pytest
@@ -6,7 +6,17 @@ from scipy.linalg import expm
 
 from posetrust import se2, se3
 from posetrust.covariance import cholesky_factor, selected_inverse
-from posetrust.optimizer import gauss_newton, levenberg_marquardt
+from posetrust.optimizer import free_mask, gauss_newton, levenberg_marquardt
+from posetrust.robust import (
+    Cauchy,
+    DynamicCovarianceScaling,
+    GemanMcClure,
+    Huber,
+    Trivial,
+    irls,
+    loop_closure_indices,
+)
+from posetrust.robust_covariance import robust_covariances
 from posetrust.simulate import (
     NoiseModel,
     loop_closure_edges,
@@ -125,3 +135,38 @@ def test_sweep_conditions_are_exact_and_nested():
         assert len(outliers) == round(rate * 20)
         assert previous.items() <= outliers.items()
         previous = dict(outliers)
+
+
+kernels = pytest.mark.parametrize(
+    "kernel",
+    [Trivial(), Huber(2.0), Cauchy(2.0), DynamicCovarianceScaling(6.0), GemanMcClure(2.0, 1.5)],
+    ids=lambda k: type(k).__name__,
+)
+
+
+@kernels
+def test_kernel_weight_and_curvature_are_derivatives(kernel):
+    s, h = np.linspace(0.05, 50.0, 300), 1e-6
+    s = s[np.abs(s - 4.0) > 1e-3]
+    s = s[np.abs(s - 6.0) > 1e-3]  # skip the Huber and DCS kinks
+    dcost = (kernel.cost(s + h) - kernel.cost(s - h)) / (2 * h)
+    dweight = (kernel.weight(s + h) - kernel.weight(s - h)) / (2 * h)
+    np.testing.assert_allclose(kernel.weight(s), dcost, rtol=0, atol=1e-7)
+    np.testing.assert_allclose(kernel.curvature(s), dweight, rtol=0, atol=1e-7)
+
+
+def test_robust_covariances():
+    scenario = make_scenario(se2, n_poses=12, loop_density=1.0, outlier_rate=0.25, seed=4)
+    graph = sample_graph(se2, scenario, NoiseModel(np.full(3, 0.05)), np.random.default_rng(4))
+    closures = loop_closure_indices(graph)
+    result = irls(graph, list(scenario.truth), Huber(2.0), robust_factors=closures)
+    free = free_mask(12, 3, 0)
+    covs = robust_covariances(graph, result.poses, Huber(2.0), closures, threshold=7.8)
+    np.testing.assert_allclose(covs["naive"], np.linalg.inv(result.information[np.ix_(free, free)]), rtol=1e-10, atol=0)
+    for cov in covs.values():
+        np.testing.assert_allclose(cov, cov.T, rtol=0, atol=1e-12)
+        assert np.linalg.eigvalsh(cov).min() > 0
+
+    # With a quadratic cost the sandwich is the naive covariance.
+    plain = robust_covariances(graph, result.poses, Trivial(), closures, threshold=7.8)
+    np.testing.assert_allclose(plain["sandwich"], plain["naive"], rtol=1e-10, atol=0)
