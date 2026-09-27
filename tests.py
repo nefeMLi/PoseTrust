@@ -170,3 +170,24 @@ def test_robust_covariances():
     # With a quadratic cost the sandwich is the naive covariance.
     plain = robust_covariances(graph, result.poses, Trivial(), closures, threshold=7.8)
     np.testing.assert_allclose(plain["sandwich"], plain["naive"], rtol=1e-10, atol=0)
+
+
+def test_scalar_model_of_huber_bias():
+    """The scalar model in HYPOTHESES.md: pull, variance, naive and sandwich."""
+    rng = np.random.default_rng(5)
+    n, k, delta, offset, reps = 40, 3, 3.5, 30.0, 4000
+    huber = Huber(delta)
+    y = np.hstack([rng.normal(size=(reps, n)), offset + rng.normal(size=(reps, k))])
+    theta = np.median(y, axis=1)
+    for _ in range(100):
+        w = huber.weight((y - theta[:, None]) ** 2)
+        theta = np.sum(w * y, axis=1) / np.sum(w, axis=1)
+    s = (y - theta[:, None]) ** 2
+    w, curvature = huber.weight(s), huber.curvature(s)
+    naive = 1.0 / w.sum(axis=1)
+    sandwich = np.sum(w**2, axis=1) / np.sum(w + 2.0 * curvature * s, axis=1) ** 2
+
+    assert theta.mean() == pytest.approx(k * delta / n, abs=0.01)
+    assert theta.var() == pytest.approx(1.0 / n, rel=0.1)
+    assert sandwich.mean() == pytest.approx(1.0 / n, rel=0.02)
+    assert naive.mean() == pytest.approx(1.0 / (n + k * delta / offset), rel=0.02)
