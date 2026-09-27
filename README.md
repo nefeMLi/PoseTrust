@@ -10,7 +10,8 @@ overconfident side.
 Where the problem is close to linear (small rotational noise, no false loop
 closures left in the graph) the reported covariance is honest. When it fails,
 it fails in the dangerous direction, claiming more certainty than it has: from
-about 0.06–0.1 rad of rotational noise per measurement, severely under uncaught
+about 0.06–0.1 rad of rotational noise per measurement in most graphs tested,
+severely under uncaught
 false loop closures, and even after a convex robust kernel (Huber) has restored
 the trajectory itself. Of the robust back-ends tested, only switchable
 constraints kept the covariance honest at every outlier rate.
@@ -35,10 +36,19 @@ bootstrap interval and a Benjamini-Hochberg correction across each experiment.
 |---|---|
 | E1 validation gate | Where the covariance is exact, mean NEES/dof is 0.975 (SE(2)) and 0.993 (SE(3)). The implementation passes. |
 | E2 loop-closure density | Sparse graphs are only slightly overconfident: at most +4.7%, significant only for SE(3) with 0–1 closures. |
-| E3 rotational noise | Calibration breaks from 0.06 rad (SE(3)) and 0.10 rad (SE(2)) and degrades quickly after that. At 0.22 rad only 1.5% of SE(3)'s 95% ellipsoids contain the truth. |
+| E3 rotational noise | Calibration breaks from 0.06 rad (SE(3)) and 0.10 rad (SE(2)) and degrades quickly after that. At 0.22 rad only 1.5% of SE(3)'s 95% ellipsoids contain the truth. Across eight loop-closure layouts the break point ranges over 0.06–0.15 rad (SE(3)) and 0.06–0.22 rad (SE(2)); no layout is ever conservative. |
 | E4 false loop closures | Huber recovers accuracy but not calibration (1.35 → 3.25). Switchable constraints recovers both. Cauchy and GNC are accurate but conservative. |
 
 ![E3: calibration against rotational noise](figures/e3_nonlinearity.svg)
+
+Repeating E3 on eight loop-closure layouts of the same trajectory keeps the
+direction but not the size. Six layouts behave like the original graph; two
+stay close to calibrated far longer (SE(3) at 0.22 rad: 1.6 and 2.3 against
+16–19). Those two are the only layouts with a closure to the anchored first
+pose. That was noticed after the run, on two cases, so it is an observation
+rather than a finding.
+
+![E3 across graphs: NEES against rotational noise for each layout](figures/e3_graphs.svg)
 
 Why Huber stays overconfident: its weight on a residual shrinks but never
 reaches zero, so a false closure still enters the information matrix the
@@ -50,9 +60,8 @@ weight, which removes both effects.
 Limitations:
 
 - Simulation only. A real-data experiment was planned and cut.
-- Each experiment uses one graph. Across eight random graphs at 0.15 rad the
-  direction held (never conservative) but the size varied up to five-fold;
-  E3's graph is at the severe end.
+- E1, E2 and E4 each use one graph. E3 was repeated across loop-closure
+  layouts, but all on one trajectory.
 - At high noise the mean NEES is driven by a minority of runs (1.5–2.8× the
   median), so read the magnitudes alongside the coverage figure.
 - Cauchy and GNC also down-weight correct measurements, which inflates the
@@ -105,13 +114,14 @@ From the project folder:
 python -m experiments.e1_validation_gate
 python -m experiments.e2_loop_closure_density
 python -m experiments.e3_nonlinearity
+python -m experiments.e3_nonlinearity --graphs
 python -m experiments.e4_perceptual_aliasing
 ```
 
 Each script writes its results to `results/` and its figure to `figures/`.
 Add `--figures-only` to redraw a figure from the saved results in seconds.
-E1 takes about a minute, E2 about ten, E3 up to an hour; E4 runs in parallel
-and takes about twenty minutes on twelve cores.
+E1 takes about a minute, E2 about ten, E3 up to an hour. E3 `--graphs` and
+E4 run in parallel and take about six and twenty minutes on twelve cores.
 
 The core checks run with `pytest tests.py`.
 
