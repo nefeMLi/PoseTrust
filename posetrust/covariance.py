@@ -1,4 +1,4 @@
-"""Marginal and relative covariances by selected inversion."""
+"""The state covariance by selected inversion of the Cholesky factor."""
 
 from __future__ import annotations
 
@@ -42,27 +42,3 @@ def covariance_matrix(information: np.ndarray, anchor: int, dof: int) -> np.ndar
     sigma = np.zeros_like(information)
     sigma[np.ix_(free, free)] = selected_inverse(L)
     return sigma
-
-
-def marginal_covariances(information: np.ndarray, anchor: int, dof: int) -> list[np.ndarray]:
-    """Per-pose marginal covariance blocks."""
-    sigma = covariance_matrix(information, anchor, dof)
-    n_poses = information.shape[0] // dof
-    return [sigma[k * dof : (k + 1) * dof, k * dof : (k + 1) * dof] for k in range(n_poses)]
-
-
-def joint_covariance(information: np.ndarray, i: int, j: int, anchor: int, dof: int) -> np.ndarray:
-    """Joint covariance of poses i and j."""
-    sigma = covariance_matrix(information, anchor, dof)
-    idx = np.r_[i * dof : (i + 1) * dof, j * dof : (j + 1) * dof]
-    return sigma[np.ix_(idx, idx)]
-
-
-def relative_covariance(
-    lie, information: np.ndarray, poses: list[np.ndarray], i: int, j: int, anchor: int
-) -> np.ndarray:
-    """Covariance of the relative pose Ti^-1 Tj."""
-    dof = lie.DOF
-    m_inv = lie.compose(lie.inverse(poses[j]), poses[i])
-    J = np.hstack([-lie.adjoint(m_inv), np.eye(dof)])
-    return J @ joint_covariance(information, i, j, anchor, dof) @ J.T

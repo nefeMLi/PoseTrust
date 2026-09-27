@@ -20,5 +20,5 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: pip install gtsam "numpy<2" scipy
-      - run: python -m experiments.gtsam_check
+      - run: pip install gtsam "numpy<2" scipy pytest
+      - run: pytest tests.py -k gtsam

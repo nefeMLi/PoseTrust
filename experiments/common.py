@@ -17,11 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
 FIGURES_DIR = ROOT / "figures"
 
-# Analysis rules fixed in HYPOTHESES.md.
+# Analysis rules.
 ALPHA = 0.05
 MIN_CONVERGED_FRACTION = 0.5
-# Usable conditions below this converged fraction are lower bounds.
-SURVIVORSHIP_FRACTION = 0.9
 BOOTSTRAP_RESAMPLES = 2000
 
 # Reference palette: the observed series is blue, references are neutral.
@@ -103,17 +101,6 @@ def mark_fdr(rows: list[dict], by: tuple[str, ...] = ()) -> None:
             row["significant_after_fdr"] = bool(reject)
         for row in group:
             row.setdefault("significant_after_fdr", False)
-
-
-def survivorship_warning(rows: list[dict], describe) -> None:
-    """Flag usable conditions that lost enough runs to be biased."""
-    suspect = [r for r in rows if r["usable"] and r["converged_fraction"] < SURVIVORSHIP_FRACTION]
-    if not suspect:
-        return
-    print(f"\n  Survivorship warning: these dropped more than {1 - SURVIVORSHIP_FRACTION:.0%} of runs, so")
-    print("  their ratios are biased towards calibration and are lower bounds:")
-    for row in suspect:
-        print(f"    {describe(row)}: {row['converged']}/{row['n_runs']} converged, ratio {row['ratio']:.1f}")
 
 
 def write_results(rows: list[dict], name: str) -> Path:

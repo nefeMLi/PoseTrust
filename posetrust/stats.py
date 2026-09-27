@@ -28,22 +28,6 @@ def nees(error: np.ndarray, covariance: np.ndarray) -> float:
     return float(error @ cho_solve(factor, error))
 
 
-def nees_series(errors: np.ndarray, covariances: np.ndarray) -> np.ndarray:
-    """NEES for each run."""
-    return np.array([nees(e, S) for e, S in zip(np.asarray(errors), np.asarray(covariances))])
-
-
-def nees_by_dof(lie, errors: np.ndarray, covariances: np.ndarray) -> dict[str, np.ndarray]:
-    """NEES split into translation and rotation parts."""
-    errors = np.asarray(errors)
-    covariances = np.asarray(covariances)
-    t = lie.TRANSLATION_DOF
-    return {
-        "translation": nees_series(errors[:, :t], covariances[:, :t, :t]),
-        "rotation": nees_series(errors[:, t:], covariances[:, t:, t:]),
-    }
-
-
 def benjamini_hochberg(pvalues: np.ndarray, alpha: float = 0.05) -> np.ndarray:
     """Benjamini-Hochberg rejections at level alpha."""
     pvalues = np.asarray(pvalues, dtype=float)

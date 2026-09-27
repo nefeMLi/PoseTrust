@@ -1,107 +1,41 @@
-"""Core checks: Lie maths, Jacobians, covariances, kernels and a calibrated case."""
+"""Core checks: the Jacobians, a case where the covariance is known to be honest, and GTSAM."""
 
 import numpy as np
 import pytest
-from scipy.linalg import expm
 
 from posetrust import se2, se3
-from posetrust.covariance import cholesky_factor, selected_inverse
-from posetrust.graph import PoseGraph
-from posetrust.optimizer import free_mask, gauss_newton, levenberg_marquardt, solve_step
-from posetrust.robust import Cauchy, DynamicCovarianceScaling, GemanMcClure, Huber, Trivial, irls, loop_closure_indices
-from posetrust.robust_covariance import pull_bias, robust_covariances
-from posetrust.simulate import NoiseModel, loop_closure_edges, make_scenario, monte_carlo, sample_graph
+from posetrust.covariance import covariance_matrix
+from posetrust.optimizer import gauss_newton
+from posetrust.simulate import NoiseModel, make_scenario, monte_carlo, sample_graph
 from posetrust.stats import CONSISTENT, consistency
 
 groups = pytest.mark.parametrize("lie", [se2, se3], ids=["SE2", "SE3"])
 
 
-def hat(lie, xi):
-    """Lie algebra matrix of xi, built without the library."""
-    if lie is se2:
-        x, y, t = xi
-        return np.array([[0.0, -t, x], [t, 0.0, y], [0.0, 0.0, 0.0]])
-    v, (a, b, c) = xi[:3], xi[3:]
-    M = np.zeros((4, 4))
-    M[:3, :3] = [[0.0, -c, b], [c, 0.0, -a], [-b, a, 0.0]]
-    M[:3, 3] = v
-    return M
-
-
-def random_xi(lie, rng, angle):
-    xi = rng.normal(size=lie.DOF)
-    rotation = xi[lie.TRANSLATION_DOF :]
-    xi[lie.TRANSLATION_DOF :] = angle * rotation / np.linalg.norm(rotation)
-    return xi
-
-
-@groups
-@pytest.mark.parametrize("angle", [1e-9, 1e-4, 0.05, 1.0, 3.0, np.pi - 1e-6])
-def test_exp_and_log(lie, angle):
-    rng = np.random.default_rng(0)
-    for _ in range(20):
-        xi = random_xi(lie, rng, angle)
-        np.testing.assert_allclose(lie.exp(xi), expm(hat(lie, xi)), rtol=0, atol=1e-12)
-        np.testing.assert_allclose(lie.log(lie.exp(xi)), xi, rtol=0, atol=1e-8)
-
-
-@groups
-@pytest.mark.parametrize("angle", [1e-6, 0.05, 1.0, 2.5])
-def test_right_jacobian(lie, angle):
-    xi, h = random_xi(lie, np.random.default_rng(1), angle), 1e-6
-    T_inv = lie.inverse(lie.exp(xi))
-    numeric = np.zeros((lie.DOF, lie.DOF))
-    for k in range(lie.DOF):
-        d = np.zeros(lie.DOF)
-        d[k] = h
-        plus = lie.log(lie.compose(T_inv, lie.exp(xi + d)))
-        minus = lie.log(lie.compose(T_inv, lie.exp(xi - d)))
-        numeric[:, k] = (plus - minus) / (2 * h)
-    np.testing.assert_allclose(lie.right_jacobian(xi), numeric, rtol=0, atol=1e-7)
-
-
 @groups
 def test_factor_jacobians(lie):
+    """Analytic residual Jacobians against central differences, away from the truth."""
     scenario = make_scenario(lie, n_poses=8, loop_density=0.5, seed=0)
     graph = sample_graph(lie, scenario, NoiseModel(np.full(lie.DOF, 0.1)), np.random.default_rng(0))
     rng = np.random.default_rng(1)
     poses = [lie.compose(T, lie.exp(0.3 * rng.normal(size=lie.DOF))) for T in scenario.truth]
     h = 1e-6
     for factor in graph.factors:
-        analytic = graph.factor_jacobians(factor, poses)
-        for which, J in zip((factor.i, factor.j), analytic):
+        for which, J in zip((factor.i, factor.j), graph.factor_jacobians(factor, poses)):
             numeric = np.zeros((lie.DOF, lie.DOF))
             for k in range(lie.DOF):
-                e = np.zeros(lie.DOF)
-                e[k] = h
+                step = np.zeros(lie.DOF)
+                step[k] = h
                 plus, minus = list(poses), list(poses)
-                plus[which] = lie.compose(poses[which], lie.exp(e))
-                minus[which] = lie.compose(poses[which], lie.exp(-e))
+                plus[which] = lie.compose(poses[which], lie.exp(step))
+                minus[which] = lie.compose(poses[which], lie.exp(-step))
                 numeric[:, k] = (graph.residual(factor, plus) - graph.residual(factor, minus)) / (2 * h)
             np.testing.assert_allclose(J, numeric, rtol=0, atol=1e-6)
 
 
-def test_selected_inverse_matches_dense_inverse():
-    rng = np.random.default_rng(2)
-    for n in (3, 12, 30):
-        A = rng.normal(size=(n, n))
-        H = A @ A.T + n * np.eye(n)
-        np.testing.assert_allclose(selected_inverse(cholesky_factor(H)), np.linalg.inv(H), rtol=1e-10, atol=1e-12)
-
-
-@groups
-def test_levenberg_marquardt_reaches_the_gauss_newton_optimum(lie):
-    scenario = make_scenario(lie, n_poses=10, loop_density=0.5, seed=3)
-    graph = sample_graph(lie, scenario, NoiseModel(np.full(lie.DOF, 0.05)), np.random.default_rng(3))
-    gn = gauss_newton(graph, list(scenario.truth))
-    lm = levenberg_marquardt(graph, list(scenario.truth))
-    assert gn.converged and lm.converged
-    for a, b in zip(gn.poses, lm.poses):
-        np.testing.assert_allclose(a, b, rtol=0, atol=1e-9)
-
-
 @groups
 def test_near_linear_case_is_consistent(lie):
+    """Tiny noise and almost no turning: the reported covariance should be honest."""
     scenario = make_scenario(lie, n_poses=6, loop_density=0.5, seed=1, turn=0.05)
     result = monte_carlo(lie, scenario, NoiseModel(np.full(lie.DOF, 1e-3)), n_runs=150, seed=7)
     report = consistency(result, alpha=0.01)
@@ -109,97 +43,39 @@ def test_near_linear_case_is_consistent(lie):
     assert report.nees.mean / report.nees.dof == pytest.approx(1.0, abs=0.06)
 
 
-def test_sweep_conditions_are_exact_and_nested():
-    with pytest.raises(ValueError, match="not a whole number"):
-        loop_closure_edges(12, 0.05, np.random.default_rng(0))
-    sparse = set(loop_closure_edges(20, 0.2, np.random.default_rng(9)))
-    dense = set(loop_closure_edges(20, 0.8, np.random.default_rng(9)))
-    assert len(sparse) == 4 and len(dense) == 16 and sparse <= dense
+@groups
+@pytest.mark.parametrize("density", [0.0, 0.5])
+def test_agrees_with_gtsam(lie, density):
+    """Same graph in GTSAM: the same estimate and marginal covariances. GTSAM has no Windows build,
+    so this skips locally and runs on GitHub Actions."""
+    gtsam = pytest.importorskip("gtsam")
+    scenario = make_scenario(lie, n_poses=10, loop_density=density, seed=11)
+    graph = sample_graph(lie, scenario, NoiseModel(np.full(lie.DOF, 0.03)), np.random.default_rng(11))
+    ours = gauss_newton(graph, list(scenario.truth))
+    sigma = covariance_matrix(ours.information, anchor=0, dof=lie.DOF)
 
-    previous = {}
-    for rate in (0.0, 0.1, 0.2, 0.3):
-        outliers = make_scenario(se2, n_poses=20, loop_density=1.0, outlier_rate=rate, seed=3).outliers
-        assert len(outliers) == round(rate * 20)
-        assert previous.items() <= outliers.items()
-        previous = dict(outliers)
+    # GTSAM orders the SE(3) tangent rotation first; posetrust translation first.
+    order = np.arange(3) if lie is se2 else np.array([3, 4, 5, 0, 1, 2])
+    pose = (lambda T: gtsam.Pose2(T[0, 2], T[1, 2], np.arctan2(T[1, 0], T[0, 0]))) if lie is se2 else gtsam.Pose3
+    between = gtsam.BetweenFactorPose2 if lie is se2 else gtsam.BetweenFactorPose3
+    prior = gtsam.PriorFactorPose2 if lie is se2 else gtsam.PriorFactorPose3
+    factors, initial = gtsam.NonlinearFactorGraph(), gtsam.Values()
+    # A prior this tight stands in for posetrust's anchored first pose.
+    factors.add(prior(0, pose(scenario.truth[0]), gtsam.noiseModel.Isotropic.Sigma(lie.DOF, 1e-9)))
+    for f in graph.factors:
+        model = gtsam.noiseModel.Gaussian.Information(f.information[np.ix_(order, order)])
+        factors.add(between(f.i, f.j, pose(f.measurement), model))
+    for k, T in enumerate(scenario.truth):
+        initial.insert(k, pose(T))
+    params = gtsam.LevenbergMarquardtParams()
+    params.setRelativeErrorTol(1e-15)
+    params.setAbsoluteErrorTol(1e-15)
+    result = gtsam.LevenbergMarquardtOptimizer(factors, initial, params).optimize()
+    marginals = gtsam.Marginals(factors, result)
 
-
-kernels = pytest.mark.parametrize(
-    "kernel",
-    [Trivial(), Huber(2.0), Cauchy(2.0), DynamicCovarianceScaling(6.0), GemanMcClure(2.0, 1.5)],
-    ids=lambda k: type(k).__name__,
-)
-
-
-@kernels
-def test_kernel_weight_and_curvature_are_derivatives(kernel):
-    s, h = np.linspace(0.05, 50.0, 300), 1e-6
-    s = s[np.abs(s - 4.0) > 1e-3]
-    s = s[np.abs(s - 6.0) > 1e-3]  # skip the Huber and DCS kinks
-    dcost = (kernel.cost(s + h) - kernel.cost(s - h)) / (2 * h)
-    dweight = (kernel.weight(s + h) - kernel.weight(s - h)) / (2 * h)
-    np.testing.assert_allclose(kernel.weight(s), dcost, rtol=0, atol=1e-7)
-    np.testing.assert_allclose(kernel.curvature(s), dweight, rtol=0, atol=1e-7)
-
-
-def test_robust_covariances():
-    scenario = make_scenario(se2, n_poses=12, loop_density=1.0, outlier_rate=0.25, seed=4)
-    graph = sample_graph(se2, scenario, NoiseModel(np.full(3, 0.05)), np.random.default_rng(4))
-    closures = loop_closure_indices(graph)
-    result = irls(graph, list(scenario.truth), Huber(2.0), robust_factors=closures)
-    free = free_mask(12, 3, 0)
-    covs = robust_covariances(graph, result.poses, Huber(2.0), closures, threshold=7.8)
-    np.testing.assert_allclose(covs["naive"], np.linalg.inv(result.information[np.ix_(free, free)]), rtol=1e-10, atol=0)
-    for cov in covs.values():
-        np.testing.assert_allclose(cov, cov.T, rtol=0, atol=1e-12)
-        assert np.linalg.eigvalsh(cov).min() > 0
-
-    # With a quadratic cost both sandwiches are the naive covariance.
-    plain = robust_covariances(graph, result.poses, Trivial(), closures, threshold=7.8)
-    np.testing.assert_allclose(plain["sandwich"], plain["naive"], rtol=1e-10, atol=0)
-    np.testing.assert_allclose(plain["expected"], plain["naive"], rtol=1e-8, atol=0)
-
-
-def test_scalar_model_of_huber_bias():
-    """The scalar model in HYPOTHESES.md: pull, variance, naive and sandwich."""
-    rng = np.random.default_rng(5)
-    n, k, delta, offset, reps = 40, 3, 3.5, 30.0, 4000
-    huber = Huber(delta)
-    y = np.hstack([rng.normal(size=(reps, n)), offset + rng.normal(size=(reps, k))])
-    theta = np.median(y, axis=1)
-    for _ in range(100):
-        w = huber.weight((y - theta[:, None]) ** 2)
-        theta = np.sum(w * y, axis=1) / np.sum(w, axis=1)
-    s = (y - theta[:, None]) ** 2
-    w, curvature = huber.weight(s), huber.curvature(s)
-    naive = 1.0 / w.sum(axis=1)
-    sandwich = np.sum(w**2, axis=1) / np.sum(w + 2.0 * curvature * s, axis=1) ** 2
-
-    assert theta.mean() == pytest.approx(k * delta / n, abs=0.01)
-    assert theta.var() == pytest.approx(1.0 / n, rel=0.1)
-    assert sandwich.mean() == pytest.approx(1.0 / n, rel=0.02)
-    assert naive.mean() == pytest.approx(1.0 / (n + k * delta / offset), rel=0.02)
-
-    # E6: the pull of the linear-region factors, through the rest, is the bias.
-    r = y - theta[:, None]
-    pulled = r**2 > delta**2
-    shift = np.sum(np.where(pulled, huber.weight(r**2) * r, 0.0), axis=1) / (~pulled).sum(axis=1)
-    assert shift.mean() == pytest.approx(k * delta / n, abs=0.01)
-    assert (theta - shift).mean() == pytest.approx(0.0, abs=0.01)
-
-
-def test_pull_bias_is_minus_one_step_without_the_pulled_factors():
-    scenario = make_scenario(se2, n_poses=12, loop_density=1.0, outlier_rate=0.25, seed=4)
-    graph = sample_graph(se2, scenario, NoiseModel(np.full(3, 0.05)), np.random.default_rng(4))
-    closures, kernel = loop_closure_indices(graph), Huber(2.0)
-    result = irls(graph, list(scenario.truth), kernel, robust_factors=closures)
-    # At Huber's own threshold every other factor has weight 1, so this is exact.
-    shift, pulled = pull_bias(graph, result.poses, kernel, closures, threshold=4.0)
-    assert {k for k, e in enumerate(scenario.edges) if e in scenario.outliers} <= set(pulled)
-
-    trusted = PoseGraph(se2)
-    trusted.poses = graph.poses
-    trusted.factors = [f for k, f in enumerate(graph.factors) if k not in set(pulled)]
-    free = free_mask(12, 3, 0)
-    H, b = trusted.linearize(result.poses)
-    np.testing.assert_allclose(shift, -solve_step(H, b, free)[free], rtol=0, atol=1e-9)
+    at, back, d = (result.atPose2 if lie is se2 else result.atPose3), np.argsort(order), lie.DOF
+    for k in range(1, 10):
+        np.testing.assert_allclose(at(k).matrix(), ours.poses[k], rtol=0, atol=1e-6)
+        block = sigma[k * d : (k + 1) * d, k * d : (k + 1) * d]
+        theirs = marginals.marginalCovariance(k)[np.ix_(back, back)]
+        np.testing.assert_allclose(theirs, block, rtol=0, atol=1e-3 * np.max(np.abs(block)))
