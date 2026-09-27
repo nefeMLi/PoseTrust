@@ -436,3 +436,35 @@ covariance can remove it. A redescending kernel gives a gross outlier almost
 no pull, which is why DCS avoids it. The model agrees with H6a and H6b and
 disagrees with H6c, which predicted the inlier covariance calibrated. H6c is
 left as written and will be judged as written.
+
+### Amendment, 2026-09-27: after the development run, before the test run
+
+**What the development layouts showed.** The gate passes on all eight. For
+Huber at 10% outliers and above, the bias term is 98-100% of the excess NEES
+on every layout, and no covariance fixes Huber on any of them. The sandwich
+makes Cauchy and GNC slightly more conservative at 0% outliers, not less.
+
+**That last result exposed a mistake in the previous amendment.** It called
+`Σ w_i² J_iᵀJ_i` the middle term's expectation under the noise model. It is
+not: `w_i` depends on the residual, so the expectation is `E[w(s)² s] / d`
+with `s ~ χ²(d)`, not the observed `w_i²`. Because `w` falls as `s` grows,
+the observed version overstates the middle term, which is why the sandwich
+came out conservative. The sandwich stays as committed, and H6b and H6d are
+judged on it as written.
+
+**Added, as exploratory.** The textbook form, with both terms replaced by
+their expectations under the noise model: `a = E[w + 2ρ''s/d]` and
+`c = E[w² s]/d` for robust factors, 1 for odometry, giving
+`(Σ a_i J_iᵀJ_i)⁻¹ (Σ c_i J_iᵀJ_i) (Σ a_i J_iᵀJ_i)⁻¹`. It was added after
+the development results, so nothing it shows is confirmatory. Seen on
+development layout 300 before this amendment was written: at 0% outliers it
+gives 0.99 for Cauchy and 1.03 for GNC, where the naive covariance gives 0.94
+and 0.93; for Huber at 20% it gives 5.16, against 2.06 naive, because it
+treats the false closures as genuine.
+
+**H6c, measured properly.** The development run only recorded how often the
+threshold flags exactly the false closures (3-10% of runs). The test run
+also records the NEES of those runs and of the rest, pooled over layouts, so
+H6c can be judged on the runs it is about.
+
+Nothing else changes. The test layouts have not been run.
