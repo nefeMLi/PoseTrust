@@ -40,6 +40,13 @@ bootstrap interval and a Benjamini-Hochberg correction across each experiment.
 
 ![E3: calibration against rotational noise](figures/e3_nonlinearity.svg)
 
+Why Huber stays overconfident: its weight on a residual shrinks but never
+reaches zero, so a false closure still enters the information matrix the
+covariance is computed from, as if it were a genuine, weaker measurement,
+and still pulls the estimate slightly. The reported covariance shrinks while
+the error does not. Redescending kernels give a gross outlier almost zero
+weight, which removes both effects.
+
 Limitations:
 
 - Simulation only. A real-data experiment was planned and cut.
@@ -51,6 +58,36 @@ Limitations:
 - Cauchy and GNC also down-weight correct measurements, which inflates the
   covariance they report.
 - Graphs have at most twenty poses and are solved with dense linear algebra.
+
+## Related work
+
+That linearised SLAM estimators become overconfident is known from filtering:
+Bailey et al. [1] showed EKF-SLAM turning inconsistent as heading uncertainty
+grows, and Huang et al. [2] traced it to linearisation creating information
+the system does not have. Barfoot and Furgale [3] give the SE(3) uncertainty
+machinery used here. E3 is the batch pose-graph version of that result, not
+a new effect.
+
+Robust back-ends such as switchable constraints [4], dynamic covariance
+scaling [5] and graduated non-convexity [6] were evaluated on the trajectory
+they recover. What this repository adds is the other half: whether the
+covariance they report is still honest once the outliers are handled. NEES
+and its chi-squared test follow Bar-Shalom et al. [7].
+
+1. T. Bailey, J. Nieto, J. Guivant, M. Stevens, E. Nebot. Consistency of the
+   EKF-SLAM algorithm. IROS 2006.
+2. G. Huang, A. Mourikis, S. Roumeliotis. Observability-based rules for
+   designing consistent EKF SLAM estimators. IJRR 29(5), 2010.
+3. T. Barfoot, P. Furgale. Associating uncertainty with three-dimensional
+   poses for use in estimation problems. IEEE T-RO 30(3), 2014.
+4. N. Sünderhauf, P. Protzel. Switchable constraints for robust pose graph
+   SLAM. IROS 2012.
+5. P. Agarwal, G. D. Tipaldi, L. Spinello, C. Stachniss, W. Burgard. Robust
+   map optimization using dynamic covariance scaling. ICRA 2013.
+6. H. Yang, P. Antonante, V. Tzoumas, L. Carlone. Graduated non-convexity for
+   robust spatial perception. RA-L 5(2), 2020.
+7. Y. Bar-Shalom, X. R. Li, T. Kirubarajan. Estimation with Applications to
+   Tracking and Navigation. Wiley, 2001.
 
 ## Installation
 
