@@ -61,12 +61,9 @@ METHODS = [
     ("DCS", DynamicCovarianceScaling(THRESHOLD)),
     ("GNC", GemanMcClure(DELTA, 1.0)),
 ]
-COVARIANCE_COLOURS = {
-    "naive": INK_MUTED,
-    "sandwich": "#2a78d6",
-    "expected": "#1baf7a",
-    "inlier": "#eb6834",
-}
+# The figure shows the pre-registered covariances; the expected sandwich is
+# exploratory and stays in the tables.
+COVARIANCE_COLOURS = {"naive": INK_MUTED, "sandwich": "#2a78d6", "inlier": "#eb6834"}
 
 
 def solve(name: str, kernel, graph, start):
@@ -206,11 +203,13 @@ def select(rows, **match):
 def report(rows) -> None:
     seeds = sorted({r["graph"] for r in rows})
     n = len(seeds)
+    # Only the covariances this split recorded; the development run predates "expected".
+    names = [c for c in NAMES if any(r["covariance"] == c for r in rows)]
     print("\nE5 - which covariance a robust back-end should report")
     print("=" * 84)
 
     print("\n  Gate: plain least squares, no outliers, calibrated layouts (need 6)")
-    for c in NAMES:
+    for c in names:
         gate = select(rows, method="plain least squares", covariance=c)
         ratios = ", ".join(f"{r['ratio']:.2f}" for r in gate)
         print(f"  {c:<13} {sum(calibrated(r) for r in gate)}/{n}   NEES/dof {ratios}")
@@ -222,10 +221,10 @@ def report(rows) -> None:
     print("\n  NEES/dof, median over layouts [min, max]")
     for method in ("Huber", "Cauchy", "DCS", "GNC"):
         print(f"\n  {method}")
-        print(f"  {'rate':>6} " + "".join(f"{c:>22}" for c in NAMES))
+        print(f"  {'rate':>6} " + "".join(f"{c:>22}" for c in names))
         for rate in OUTLIER_RATES:
             cells = []
-            for c in NAMES:
+            for c in names:
                 ratios = np.array(
                     [r["ratio"] for r in select(rows, method=method, rate=rate, covariance=c)]
                 )
@@ -251,7 +250,7 @@ def report(rows) -> None:
 
     print(f"\n  A covariance fixes Huber if calibrated at every rate >= {JUDGED_RATE:g}")
     print("  on at least 6 layouts")
-    for c in NAMES:
+    for c in names:
         fixed = sum(
             all(
                 calibrated(r)
@@ -264,6 +263,9 @@ def report(rows) -> None:
 
     print("\n  H6c: Huber under the inlier covariance, runs pooled over layouts, split by")
     print("  whether the threshold flagged exactly the false closures")
+    if "exact_runs" not in rows[0]:
+        print("  not recorded for this split (added before the test run)")
+        judged = []
     for rate in judged:
         level = select(rows, method="Huber", rate=rate, covariance="inlier")
         dof = level[0]["dof"]
@@ -284,7 +286,7 @@ def report(rows) -> None:
     for method in ("Cauchy", "GNC"):
         cells = ", ".join(
             f"{c} {sum(calibrated(r) for r in select(rows, method=method, rate=0.0, covariance=c))}/{n}"
-            for c in NAMES
+            for c in names
         )
         print(f"  {method:<7} {cells}")
     print()
@@ -296,7 +298,7 @@ def build_figure(split: str):
     fig, (left, right) = figure(nrows=1, ncols=2, size=(10.0, 4.4))
     rates = np.array(OUTLIER_RATES)
 
-    for c in NAMES:
+    for c, colour in COVARIANCE_COLOURS.items():
         per_rate = [
             np.array([r["ratio"] for r in select(rows, method="Huber", rate=x, covariance=c)])
             for x in rates
@@ -306,7 +308,6 @@ def build_figure(split: str):
         median = np.array([np.nanmedian(v) if np.isfinite(v).any() else np.nan for v in per_rate])
         low = np.array([np.nanmin(v) if np.isfinite(v).any() else np.nan for v in per_rate])
         high = np.array([np.nanmax(v) if np.isfinite(v).any() else np.nan for v in per_rate])
-        colour = COVARIANCE_COLOURS[c]
         left.fill_between(rates, low, high, color=colour, alpha=0.15, linewidth=0)
         left.plot(rates, median, marker="o", markersize=5, linewidth=2.0, color=colour, label=c)
     left.axhline(1.0, color=INK_MUTED, linewidth=1.5, linestyle=":")
@@ -324,7 +325,7 @@ def build_figure(split: str):
     label(right, "Where Huber's excess comes from (naive)", "outlier rate", "per dof, median over layouts")
     right.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
 
-    title(fig, f"E5 ({split} layouts): a better covariance for the same Huber estimate")
+    title(fig, f"E5 ({split} layouts): no covariance fixes Huber, because its error is bias")
     return fig
 
 
