@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from itertools import pairwise
 
 import numpy as np
@@ -35,18 +36,20 @@ N_POSES = 10
 LOOP_DENSITY = 0.3
 TURN = 0.25
 SEED = 200
+# Loop-closure layouts for the repeat across graphs; SEED is the first.
+GRAPH_SEEDS = [200, 300, 400, 500, 600, 700, 800, 900]
 
 # Sequential blue ramp, light to dark with noise.
 NOISE_RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]
 
 
-def condition(lie, rotation_sigma: float, n_runs: int) -> dict:
+def condition(lie, rotation_sigma: float, n_runs: int, seed: int = SEED) -> dict:
     """Run one noise level: NEES, coverage and the per-DOF split."""
     sigma = np.full(lie.DOF, TRANSLATION_NOISE)
     sigma[lie.TRANSLATION_DOF :] = rotation_sigma
 
     scenario = make_scenario(
-        lie, n_poses=N_POSES, loop_density=LOOP_DENSITY, seed=SEED, turn=TURN
+        lie, n_poses=N_POSES, loop_density=LOOP_DENSITY, seed=seed, turn=TURN
     )
     # LM converges more often than GN at high noise. Non-converged runs are
     # dropped, which biases towards calibration, so fewer failures is better.
@@ -55,7 +58,7 @@ def condition(lie, rotation_sigma: float, n_runs: int) -> dict:
         scenario,
         NoiseModel(sigma),
         n_runs=n_runs,
-        seed=SEED + 1,
+        seed=seed + 1,
         solver=levenberg_marquardt,
     )
     converged = result.converged
@@ -99,6 +102,79 @@ def run(n_runs: int) -> None:
     mark_fdr(rows)
     write_results(rows, "e3_nonlinearity")
     report_console(rows)
+
+
+def _graph_condition(group: int, rotation_sigma: float, n_runs: int, seed: int) -> dict:
+    """condition() by group index, since the Lie modules can't be pickled."""
+    name, lie = GROUPS[group]
+    return {"graph": seed, "group": name, **condition(lie, rotation_sigma, n_runs, seed)}
+
+
+def run_graphs(n_runs: int) -> None:
+    tasks = [
+        (g, sigma, seed)
+        for seed in GRAPH_SEEDS
+        for g in range(len(GROUPS))
+        for sigma in ROTATION_NOISE
+    ]
+    with ProcessPoolExecutor() as pool:
+        futures = [pool.submit(_graph_condition, g, s, n_runs, seed) for g, s, seed in tasks]
+        rows = []
+        for future in futures:
+            row = future.result()
+            rows.append(row)
+            print(
+                f"  graph {row['graph']} {row['group']} rot sigma "
+                f"{row['rotation_sigma']:<5} -> {row['verdict']}",
+                flush=True,
+            )
+
+    # Correct within each layout's sweep, as for the single graph.
+    for seed in GRAPH_SEEDS:
+        mark_fdr([r for r in rows if r["graph"] == seed])
+    write_results(rows, "e3_graphs")
+    report_graphs(rows)
+
+
+def first_break(rows, seed: int, group: str):
+    """First noise level overconfident after FDR, or None."""
+    broke = sorted(
+        r["rotation_sigma"]
+        for r in rows
+        if r["graph"] == seed
+        and r["group"] == group
+        and r["usable"]
+        and r["significant_after_fdr"]
+        and r["ratio"] > 1.0
+    )
+    return broke[0] if broke else None
+
+
+def report_graphs(rows) -> None:
+    print("\nE3 across graphs (exploratory)")
+    print("=" * 72)
+    for name, _ in GROUPS:
+        print(f"\n  {name}: NEES/dof across layouts")
+        print(f"  {'rot sd':>7} {'median':>8} {'min':>8} {'max':>8} {'overconf.':>10}")
+        for sigma in ROTATION_NOISE:
+            level = [
+                r
+                for r in rows
+                if r["group"] == name and r["rotation_sigma"] == sigma and r["usable"]
+            ]
+            if not level:
+                print(f"  {sigma:7.2f}  no usable layouts")
+                continue
+            ratios = np.array([r["ratio"] for r in level])
+            over = sum(r["significant_after_fdr"] and r["ratio"] > 1.0 for r in level)
+            print(
+                f"  {sigma:7.2f} {np.median(ratios):8.2f} {ratios.min():8.2f} "
+                f"{ratios.max():8.2f} {over:>5d}/{len(level):<4d}"
+            )
+        breaks = [first_break(rows, seed, name) for seed in GRAPH_SEEDS]
+        shown = ", ".join("none" if b is None else f"{b:g}" for b in breaks)
+        print(f"  first overconfident sd per layout: {shown}")
+    print()
 
 
 def report_console(rows) -> None:
@@ -335,11 +411,74 @@ def build_coverage_figure():
     return fig
 
 
+def build_graphs_figure():
+    """NEES against rotational noise, one line per loop-closure layout."""
+    rows = read_results("e3_graphs")
+    fig, axes = figure(nrows=1, ncols=2, size=(10.0, 4.2), sharey=True)
+    x = np.arange(len(ROTATION_NOISE))
+
+    for index, (name, _) in enumerate(GROUPS):
+        ax = axes[index]
+        ax.axhline(
+            1.0, color=INK_MUTED, linewidth=2.0, linestyle="--", label="calibrated"
+        )
+        for seed in GRAPH_SEEDS:
+            by_sigma = {
+                r["rotation_sigma"]: r["ratio"] if r["usable"] else np.nan
+                for r in rows
+                if r["graph"] == seed and r["group"] == name
+            }
+            y = [by_sigma.get(s, np.nan) for s in ROTATION_NOISE]
+            original = seed == SEED
+            ax.plot(
+                x,
+                y,
+                marker="o",
+                markersize=6 if original else 4,
+                linewidth=2.0 if original else 1.2,
+                color=OBSERVED if original else INK_MUTED,
+                alpha=1.0 if original else 0.45,
+                zorder=3 if original else 2,
+                label="original graph" if original else None,
+            )
+        ax.plot([], [], color=INK_MUTED, alpha=0.45, linewidth=1.2, label="other layouts")
+        ax.set_yscale("log")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{s:g}" for s in ROTATION_NOISE])
+        ax.set_xlim(-0.5, len(x) - 0.5)
+        label(
+            ax,
+            f"{name} - {len(GRAPH_SEEDS)} loop-closure layouts",
+            "rotational noise (rad)",
+            "mean NEES / dof" if index == 0 else "",
+        )
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="outside lower center",
+        ncols=3,
+        frameon=False,
+        fontsize=8.5,
+        labelcolor=INK_MUTED,
+    )
+    fig.suptitle(
+        "E3 across graphs: where calibration breaks depends on the layout",
+        color=INK,
+        fontsize=12,
+        x=0.02,
+        ha="left",
+    )
+    return fig
+
+
 def figures() -> bool:
     written = True
     for builder, name in (
         (build_figure, "e3_nonlinearity"),
         (build_coverage_figure, "e3_coverage"),
+        (build_graphs_figure, "e3_graphs"),
     ):
         try:
             print(f"figure written to {save_figure(builder(), name)}")
@@ -353,10 +492,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=200)
     parser.add_argument("--figures-only", action="store_true")
+    parser.add_argument(
+        "--graphs", action="store_true", help="repeat the sweep across graphs"
+    )
     args = parser.parse_args()
 
     if args.figures_only:
         report_console(read_results("e3_nonlinearity"))
+        report_graphs(read_results("e3_graphs"))
+    elif args.graphs:
+        run_graphs(args.runs)
     else:
         run(args.runs)
     figures()
