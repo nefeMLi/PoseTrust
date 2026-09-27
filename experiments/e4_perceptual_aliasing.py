@@ -26,8 +26,8 @@ from posetrust import se2
 from posetrust.optimizer import gauss_newton
 from posetrust.robust import (
     Cauchy,
+    DynamicCovarianceScaling,
     Huber,
-    SwitchableConstraints,
     chi2_threshold,
     graduated_non_convexity,
     irls,
@@ -42,6 +42,10 @@ LOOP_DENSITY = 1.0
 NOISE = 0.05
 TURN = 0.25
 SEED = 300
+# Loop-closure layouts for the repeat across graphs; SEED is the first.
+GRAPH_SEEDS = [300, 400, 500, 600, 700, 800, 900, 1000]
+# The E4 headline is judged at this outlier rate and above (HYPOTHESES.md).
+JUDGED_RATE = 0.10
 
 THRESHOLD = chi2_threshold(LIE.DOF, 0.95)
 DELTA = float(np.sqrt(THRESHOLD))
@@ -74,20 +78,22 @@ METHODS = [
     ("plain least squares", gauss_newton, True),
     ("Huber", _with_kernel(Huber(DELTA)), False),
     ("Cauchy", _with_kernel(Cauchy(DELTA)), False),
-    ("switchable", _with_kernel(SwitchableConstraints(THRESHOLD)), False),
+    ("DCS", _with_kernel(DynamicCovarianceScaling(THRESHOLD)), False),
     ("GNC", _gnc, False),
 ]
-REDESCENDING = {"Cauchy", "switchable", "GNC"}
+REDESCENDING = {"Cauchy", "DCS", "GNC"}
 
 
-def condition(method_name: str, solver, rate: float, n_runs: int) -> dict:
+def condition(
+    method_name: str, solver, rate: float, n_runs: int, seed: int = SEED
+) -> dict:
     """Run one method at one outlier rate."""
     scenario = make_scenario(
         LIE,
         n_poses=N_POSES,
         loop_density=LOOP_DENSITY,
         outlier_rate=rate,
-        seed=SEED,
+        seed=seed,
         turn=TURN,
     )
     result = monte_carlo(
@@ -95,7 +101,7 @@ def condition(method_name: str, solver, rate: float, n_runs: int) -> dict:
         scenario,
         NoiseModel(np.full(LIE.DOF, NOISE)),
         n_runs=n_runs,
-        seed=SEED + 1,
+        seed=seed + 1,
         solver=solver,
         initialize="odometry",
     )
@@ -144,6 +150,37 @@ def run(n_runs: int) -> None:
     report_console(rows)
 
 
+def _graph_condition(method: int, rate: float, n_runs: int, seed: int) -> dict:
+    name, solver, _ = METHODS[method]
+    return {"graph": seed, **condition(name, solver, rate, n_runs, seed)}
+
+
+def run_graphs(n_runs: int) -> None:
+    tasks = [
+        (m, rate, seed)
+        for seed in GRAPH_SEEDS
+        for m in range(len(METHODS))
+        for rate in OUTLIER_RATES
+    ]
+    with ProcessPoolExecutor() as pool:
+        futures = [pool.submit(_graph_condition, m, r, n_runs, seed) for m, r, seed in tasks]
+        rows = []
+        for future in futures:
+            row = future.result()
+            rows.append(row)
+            print(
+                f"  graph {row['graph']} {row['method']:<20} rate {row['rate']:<5} -> "
+                f"rms {row['rms_error']:.3f}, {row['verdict']}",
+                flush=True,
+            )
+
+    # Correct within each layout's sweep, as for the single graph.
+    for seed in GRAPH_SEEDS:
+        mark_fdr([r for r in rows if r["graph"] == seed])
+    write_results(rows, "e4_graphs")
+    report_graphs(rows)
+
+
 def _miscalibrated(row, direction: int) -> bool:
     """Significant after FDR, in the given direction (+1 over, -1 under)."""
     return (
@@ -151,6 +188,57 @@ def _miscalibrated(row, direction: int) -> bool:
         and row["significant_after_fdr"]
         and (row["ratio"] - 1.0) * direction > 0
     )
+
+
+def headline_holds(rows, seed: int) -> tuple[bool, bool]:
+    """Whether Huber and DCS behave as the E4 headline says on one layout."""
+
+    def judged(method):
+        return [
+            r
+            for r in rows
+            if r["graph"] == seed and r["method"] == method and r["rate"] >= JUDGED_RATE
+        ]
+
+    huber = all(_miscalibrated(r, +1) for r in judged("Huber"))
+    dcs = all(r["usable"] for r in judged("DCS")) and not any(
+        _miscalibrated(r, +1) for r in judged("DCS")
+    )
+    return huber, dcs
+
+
+def report_graphs(rows) -> None:
+    print("\nE4 across graphs")
+    print("=" * 84)
+    print("  NEES/dof per layout at each outlier rate (* overconfident after FDR)")
+    for method_name, _, is_baseline in METHODS:
+        if is_baseline:
+            continue
+        print(f"\n  {method_name}")
+        print("  " + " " * 7 + "".join(f"{r:>9g}" for r in OUTLIER_RATES))
+        for seed in GRAPH_SEEDS:
+            by_rate = {
+                r["rate"]: r
+                for r in rows
+                if r["graph"] == seed and r["method"] == method_name
+            }
+            cells = []
+            for rate in OUTLIER_RATES:
+                row = by_rate[rate]
+                mark = "*" if _miscalibrated(row, +1) else " "
+                cells.append(f"{row['ratio']:8.2f}{mark}" if row["usable"] else f"{'-':>9}")
+            print(f"  {seed:>5}  " + "".join(cells))
+
+    holds = {seed: headline_holds(rows, seed) for seed in GRAPH_SEEDS}
+    huber = sum(h for h, _ in holds.values())
+    dcs = sum(d for _, d in holds.values())
+    both = sum(h and d for h, d in holds.values())
+    n = len(GRAPH_SEEDS)
+    print(f"\n  Headline, judged at rates >= {JUDGED_RATE:g}:")
+    print(f"  Huber overconfident at every judged rate: {huber}/{n} layouts")
+    print(f"  DCS overconfident at none of them:        {dcs}/{n} layouts")
+    print(f"  both: {both}/{n}; the headline stands if both >= 6")
+    print()
 
 
 def report_console(rows) -> None:
@@ -358,23 +446,77 @@ def build_figure():
     return fig
 
 
+def build_graphs_figure():
+    """Calibration of each robust back-end, one line per loop-closure layout."""
+    rows = read_results("e4_graphs")
+    robust = [m[0] for m in METHODS if not m[2]]
+    colours = dict(zip(robust, METHOD_COLOURS))
+    fig, axes = figure(nrows=2, ncols=2, size=(10.0, 7.0), sharex=True, sharey=True)
+
+    for ax, method_name in zip(np.ravel(axes), robust):
+        ax.axhline(1.0, color=INK_MUTED, linewidth=2.0, linestyle=":", label="calibrated")
+        for seed in GRAPH_SEEDS:
+            by_rate = {
+                r["rate"]: r["ratio"] if r["usable"] else np.nan
+                for r in rows
+                if r["graph"] == seed and r["method"] == method_name
+            }
+            original = seed == SEED
+            ax.plot(
+                OUTLIER_RATES,
+                [by_rate.get(x, np.nan) for x in OUTLIER_RATES],
+                marker="o",
+                markersize=5 if original else 3.5,
+                linewidth=2.0 if original else 1.2,
+                color=colours[method_name] if original else INK_MUTED,
+                alpha=1.0 if original else 0.45,
+                zorder=3 if original else 2,
+                label="original graph" if original else None,
+            )
+        ax.plot([], [], color=INK_MUTED, alpha=0.45, linewidth=1.2, label="other layouts")
+        ax.set_yscale("log")
+        ax.set_xticks(OUTLIER_RATES, [f"{x:g}" for x in OUTLIER_RATES])
+        label(ax, method_name, "outlier rate", "mean NEES / dof")
+        ax.legend(frameon=False, fontsize=8, labelcolor=INK_MUTED, loc="upper left")
+
+    fig.suptitle(
+        f"E4 across graphs: calibration on {len(GRAPH_SEEDS)} loop-closure layouts",
+        color=INK,
+        fontsize=12,
+        x=0.02,
+        ha="left",
+    )
+    return fig
+
+
 def figures() -> bool:
-    try:
-        print(f"figure written to {save_figure(build_figure(), 'e4_perceptual_aliasing')}")
-    except ImportError as exc:
-        print(f"figure built but not written: no usable renderer ({exc})")
-        return False
-    return True
+    written = True
+    for builder, name in (
+        (build_figure, "e4_perceptual_aliasing"),
+        (build_graphs_figure, "e4_graphs"),
+    ):
+        try:
+            print(f"figure written to {save_figure(builder(), name)}")
+        except ImportError as exc:
+            print(f"{name} built but not written: no usable renderer ({exc})")
+            written = False
+    return written
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=200)
     parser.add_argument("--figures-only", action="store_true")
+    parser.add_argument(
+        "--graphs", action="store_true", help="repeat the sweep across graphs"
+    )
     args = parser.parse_args()
 
     if args.figures_only:
         report_console(read_results("e4_aliasing"))
+        report_graphs(read_results("e4_graphs"))
+    elif args.graphs:
+        run_graphs(args.runs)
     else:
         run(args.runs)
     figures()

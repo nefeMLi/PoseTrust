@@ -56,8 +56,8 @@ class Cauchy:
 
 
 @dataclass(frozen=True)
-class SwitchableConstraints:
-    """Switchable constraints in closed form (dynamic covariance scaling)."""
+class DynamicCovarianceScaling:
+    """Dynamic covariance scaling, the closed form of switchable constraints."""
 
     phi: float
 
