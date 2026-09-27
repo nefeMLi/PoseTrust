@@ -39,7 +39,7 @@ bootstrap interval and a Benjamini-Hochberg correction across each experiment.
 | E1 validation gate | Where the covariance is exact, mean NEES/dof is 0.975 (SE(2)) and 0.993 (SE(3)). The implementation passes. |
 | E2 loop-closure density | Sparse graphs are only slightly overconfident: at most +4.7%, significant only for SE(3) with 0–1 closures. |
 | E3 rotational noise | Calibration breaks from 0.06 rad (SE(3)) and 0.10 rad (SE(2)) and degrades quickly after that. At 0.22 rad only 1.5% of SE(3)'s 95% ellipsoids contain the truth. Across eight loop-closure layouts the break point ranges over 0.06–0.15 rad (SE(3)) and 0.06–0.22 rad (SE(2)); no layout is ever conservative. |
-| E4 false loop closures | Across eight loop-closure layouts, Huber is overconfident at every outlier rate on all eight (NEES/dof 1.35–3.25 on the original graph, up to 15.6 on others) while keeping the trajectory error to 0.10–0.17, against 0.5–0.9 for plain least squares. DCS stays accurate and calibrated on six layouts and turns overconfident on two, from 15% and 25% outliers. Cauchy and GNC are accurate and mostly conservative. |
+| E4 false loop closures | Across eight loop-closure layouts, Huber is overconfident at every outlier rate on all eight (NEES/dof 1.35–3.25 on the original graph, up to 15.6 on others) while keeping the trajectory error at 30% outliers to 0.10–0.22, against 0.6–1.7 for plain least squares where it converges. DCS stays accurate and calibrated on six layouts and turns overconfident on two, from 15% and 25% outliers. Cauchy and GNC are accurate and mostly conservative. |
 
 ![E3: calibration against rotational noise](figures/e3_nonlinearity.svg)
 
@@ -94,9 +94,10 @@ a new effect.
 
 Robust back-ends such as switchable constraints [4], dynamic covariance
 scaling [5] (its closed form, and the version tested here) and graduated
-non-convexity [6] were evaluated on the trajectory they recover. What this repository adds is the other half: whether the
-covariance they report is still honest once the outliers are handled. NEES
-and its chi-squared test follow Bar-Shalom et al. [7].
+non-convexity [6] were evaluated on the trajectory they recover. What this
+repository adds is the other half: whether the covariance they report is
+still honest once the outliers are handled. NEES and its chi-squared test
+follow Bar-Shalom et al. [7].
 
 1. T. Bailey, J. Nieto, J. Guivant, M. Stevens, E. Nebot. Consistency of the
    EKF-SLAM algorithm. IROS 2006.
