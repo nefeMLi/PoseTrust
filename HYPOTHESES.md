@@ -279,3 +279,27 @@ first noise level that is overconfident after correction, and the spread of
 NEES/dof at each level. If the breaking points differ by more than one grid
 step, the README gives them as a range rather than quoting the original
 graph's values.
+
+---
+
+## Amendment, 2026-09-27: E4 across graphs, and a naming correction
+
+**"Switchable constraints" above means dynamic covariance scaling.** The
+back-end tested in E4 applies the closed-form DCS weight of Agarwal et al.
+(2013); it does not optimise switch variables, and its covariance comes from
+the weighted information matrix rather than from a system with switches in
+it. Every result labelled switchable constraints is a DCS result. The code
+and README now say DCS; the text above is left as it was written.
+
+**E4 is repeated on eight loop-closure layouts** (scenario seeds 300, 400,
+..., 1000; seed 300 is the original graph), with the same methods, outlier
+rates, 200 runs per condition and Benjamini-Hochberg within each layout.
+Written before the new runs.
+
+Fixed before seeing them: the README keeps E4's headline, that Huber
+recovers accuracy but stays overconfident while DCS stays calibrated, only
+if it holds on at least six of the eight layouts, judged at outlier rates of
+10% and above. Huber holds on a layout if it is overconfident after
+correction at every such rate; DCS holds if it is overconfident after
+correction at none of them. Otherwise E4 is reported as layout-dependent, with
+the counts.
