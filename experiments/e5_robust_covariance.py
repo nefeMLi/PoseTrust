@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+from scipy.stats import chi2
 
 from experiments.common import (
     INK_MUTED,
@@ -63,6 +64,7 @@ METHODS = [
 COVARIANCE_COLOURS = {
     "naive": INK_MUTED,
     "sandwich": "#2a78d6",
+    "expected": "#1baf7a",
     "inlier": "#eb6834",
 }
 
@@ -124,8 +126,8 @@ def condition(method: int, rate: float, seed: int, n_runs: int) -> list[dict]:
             if cov is not None:
                 inverses[c][r] = np.linalg.inv(cov)
 
-    per_run = np.nanmean(errors**2, axis=1)
-    rms = float(np.sqrt(np.nanmean(per_run))) if solved.any() else float("nan")
+    per_run = np.mean(errors[solved] ** 2, axis=1)
+    rms = float(np.sqrt(per_run.mean())) if solved.any() else float("nan")
     rows = []
     for c in NAMES:
         defined = np.array([inv is not None for inv in inverses[c]])
@@ -155,6 +157,10 @@ def condition(method: int, rate: float, seed: int, n_runs: int) -> list[dict]:
                 "flagged_exact": float(exact[solved].mean()) if solved.any() else float("nan"),
                 "rms_error": rms,
                 "bias_ratio": bias / dof,
+                # Split by whether the threshold flagged exactly the false closures (H6c).
+                "exact_runs": int((used & exact).sum()),
+                "nees_sum_exact": float(np.sum(nees[used & exact])),
+                "nees_sum_missed": float(np.sum(nees[used & ~exact])),
                 **stats,
             }
         )
@@ -256,10 +262,23 @@ def report(rows) -> None:
         )
         print(f"  {c:<13} {fixed}/{n}")
 
-    print("\n  H6c: share of runs where the threshold flags exactly the false closures")
+    print("\n  H6c: Huber under the inlier covariance, runs pooled over layouts, split by")
+    print("  whether the threshold flagged exactly the false closures")
     for rate in judged:
-        exact = [r["flagged_exact"] for r in select(rows, method="Huber", rate=rate, covariance="inlier")]
-        print(f"  rate {rate:.2f}: median {np.median(exact):.2f}")
+        level = select(rows, method="Huber", rate=rate, covariance="inlier")
+        dof = level[0]["dof"]
+        cells = []
+        for key, count in (
+            ("nees_sum_exact", sum(r["exact_runs"] for r in level)),
+            ("nees_sum_missed", sum(r["converged"] - r["exact_runs"] for r in level)),
+        ):
+            if count == 0:
+                cells.append("no runs")
+                continue
+            ratio = sum(r[key] for r in level) / count / dof
+            low, high = (chi2.ppf(q, count * dof) / count / dof for q in (0.025, 0.975))
+            cells.append(f"{ratio:.2f} over {count} runs (band {low:.2f}-{high:.2f})")
+        print(f"  rate {rate:.2f}: exact {cells[0]}; missed {cells[1]}")
 
     print("\n  H6d: Cauchy and GNC at 0% outliers, calibrated layouts")
     for method in ("Cauchy", "GNC"):

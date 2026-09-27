@@ -167,9 +167,10 @@ def test_robust_covariances():
         np.testing.assert_allclose(cov, cov.T, rtol=0, atol=1e-12)
         assert np.linalg.eigvalsh(cov).min() > 0
 
-    # With a quadratic cost the sandwich is the naive covariance.
+    # With a quadratic cost both sandwiches are the naive covariance.
     plain = robust_covariances(graph, result.poses, Trivial(), closures, threshold=7.8)
     np.testing.assert_allclose(plain["sandwich"], plain["naive"], rtol=1e-10, atol=0)
+    np.testing.assert_allclose(plain["expected"], plain["naive"], rtol=1e-8, atol=0)
 
 
 def test_scalar_model_of_huber_bias():

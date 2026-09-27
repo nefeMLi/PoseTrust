@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from functools import cache
+
 import numpy as np
+from scipy import integrate
+from scipy.stats import chi2
 
 from posetrust.graph import PoseGraph
 from posetrust.optimizer import free_mask
 from posetrust.robust import Trivial
 
-NAMES = ("naive", "sandwich", "inlier")
+NAMES = ("naive", "sandwich", "expected", "inlier")
 
 
 def whitened_factors(
@@ -41,6 +45,22 @@ def _inverse_spd(M: np.ndarray) -> np.ndarray | None:
     return L_inv.T @ L_inv
 
 
+@cache
+def noise_model_terms(kernel, dof: int) -> tuple[float, float]:
+    """E[w + 2 rho'' s / d] and E[w^2 s] / d for s ~ chi2(d).
+
+    The sandwich's outer and middle terms per factor, if every factor followed
+    the noise model.
+    """
+
+    def expect(f):
+        return integrate.quad(lambda s: f(np.array(s)) * chi2.pdf(s, dof), 0.0, np.inf, limit=200)[0]
+
+    a = expect(lambda s: kernel.weight(s) + 2.0 * kernel.curvature(s) * s / dof)
+    c = expect(lambda s: kernel.weight(s) ** 2 * s) / dof
+    return a, c
+
+
 def robust_covariances(
     graph: PoseGraph,
     poses: list[np.ndarray],
@@ -53,6 +73,8 @@ def robust_covariances(
 
     naive     (sum w J^T J)^-1, what the back-ends report
     sandwich  A^-1 (sum w^2 J^T J) A^-1, A the robust cost's Gauss-Newton Hessian
+    expected  the sandwich with A and the middle term replaced by their
+              expectations under the noise model (noise_model_terms)
     inlier    (sum J^T J)^-1 over the factors below the threshold
 
     None marks a covariance that does not exist for this estimate, because
@@ -78,9 +100,14 @@ def robust_covariances(
     B = np.einsum("m,mij->ij", w**2, gram)
     A_inv = _inverse_spd(A)
 
+    a, c = noise_model_terms(kernel, e.shape[1])
+    A_expected = _inverse_spd(np.einsum("m,mij->ij", np.where(robust, a, 1.0), gram))
+    B_expected = np.einsum("m,mij->ij", np.where(robust, c, 1.0), gram)
+
     kept = ~robust | (s <= threshold)
     return {
         "naive": _inverse_spd(information),
         "sandwich": None if A_inv is None else A_inv @ B @ A_inv,
+        "expected": None if A_expected is None else A_expected @ B_expected @ A_expected,
         "inlier": _inverse_spd(gram[kept].sum(axis=0)),
     }
