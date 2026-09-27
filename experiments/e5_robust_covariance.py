@@ -1,0 +1,355 @@
+"""E5: which covariance a robust back-end should report."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from concurrent.futures import ProcessPoolExecutor
+from types import SimpleNamespace
+
+import numpy as np
+
+from experiments.common import (
+    INK,
+    INK_MUTED,
+    calibration,
+    figure,
+    label,
+    mark_fdr,
+    read_results,
+    save_figure,
+    write_results,
+)
+from experiments.e4_perceptual_aliasing import (
+    DELTA,
+    JUDGED_RATE,
+    LIE,
+    LOOP_DENSITY,
+    N_POSES,
+    NOISE,
+    OUTLIER_RATES,
+    THRESHOLD,
+    TURN,
+)
+from experiments.e4_perceptual_aliasing import GRAPH_SEEDS as DEV_SEEDS
+from posetrust.optimizer import gauss_newton
+from posetrust.robust import (
+    Cauchy,
+    DynamicCovarianceScaling,
+    GemanMcClure,
+    Huber,
+    Trivial,
+    graduated_non_convexity,
+    irls,
+    loop_closure_indices,
+    squared_residuals,
+)
+from posetrust.robust_covariance import NAMES, robust_covariances
+from posetrust.simulate import NoiseModel, dead_reckon, make_scenario, sample_graph
+from posetrust.stats import tangent_error
+
+TEST_SEEDS = [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800]
+SPLITS = {"dev": DEV_SEEDS, "test": TEST_SEEDS}
+ANCHOR = 0
+
+# Plain least squares only enters the gate, at 0% outliers.
+METHODS = [
+    ("plain least squares", Trivial()),
+    ("Huber", Huber(DELTA)),
+    ("Cauchy", Cauchy(DELTA)),
+    ("DCS", DynamicCovarianceScaling(THRESHOLD)),
+    ("GNC", GemanMcClure(DELTA, 1.0)),
+]
+COVARIANCE_COLOURS = {
+    "naive": INK_MUTED,
+    "sandwich": "#2a78d6",
+    "inlier": "#eb6834",
+}
+
+
+def solve(name: str, kernel, graph, start):
+    closures = loop_closure_indices(graph)
+    if name == "plain least squares":
+        return gauss_newton(graph, start, anchor=ANCHOR)
+    if name == "GNC":
+        return graduated_non_convexity(
+            graph, start, c=DELTA, anchor=ANCHOR, robust_factors=closures
+        )
+    return irls(graph, start, kernel, anchor=ANCHOR, robust_factors=closures)
+
+
+def condition(method: int, rate: float, seed: int, n_runs: int) -> list[dict]:
+    """One back-end at one outlier rate, with every covariance on the same runs."""
+    name, kernel = METHODS[method]
+    scenario = make_scenario(
+        LIE,
+        n_poses=N_POSES,
+        loop_density=LOOP_DENSITY,
+        outlier_rate=rate,
+        seed=seed,
+        turn=TURN,
+    )
+    noise = NoiseModel(np.full(LIE.DOF, NOISE))
+    false = {k for k, edge in enumerate(scenario.edges) if edge in scenario.outliers}
+
+    # Same noise draws as monte_carlo(seed + 1), so E4 and E5 share runs.
+    children = np.random.SeedSequence(seed + 1).spawn(n_runs)
+    errors = np.full((n_runs, (N_POSES - 1) * LIE.DOF), np.nan)
+    inverses = {c: [None] * n_runs for c in NAMES}
+    solved = np.zeros(n_runs, dtype=bool)
+    exact = np.zeros(n_runs, dtype=bool)
+
+    for r, child in enumerate(children):
+        graph = sample_graph(LIE, scenario, noise, np.random.default_rng(child))
+        start = dead_reckon(LIE, graph, N_POSES)
+        start[ANCHOR] = scenario.truth[ANCHOR]
+        result = solve(name, kernel, graph, start)
+        if not result.converged:
+            continue
+        solved[r] = True
+        errors[r] = np.concatenate(
+            [
+                tangent_error(LIE, result.poses[k], scenario.truth[k])
+                for k in range(N_POSES)
+                if k != ANCHOR
+            ]
+        )
+        closures = loop_closure_indices(graph)
+        s = squared_residuals(graph, result.poses)
+        exact[r] = {int(k) for k in closures if s[k] > THRESHOLD} == false
+        covariances = robust_covariances(
+            graph, result.poses, kernel, closures, THRESHOLD, anchor=ANCHOR
+        )
+        for c, cov in covariances.items():
+            if cov is not None:
+                inverses[c][r] = np.linalg.inv(cov)
+
+    per_run = np.nanmean(errors**2, axis=1)
+    rms = float(np.sqrt(np.nanmean(per_run))) if solved.any() else float("nan")
+    rows = []
+    for c in NAMES:
+        defined = np.array([inv is not None for inv in inverses[c]])
+        used = solved & defined
+        nees = np.full(n_runs, np.nan)
+        for r in np.flatnonzero(used):
+            nees[r] = errors[r] @ inverses[c][r] @ errors[r]
+        # Mean error over runs: what a better covariance cannot remove.
+        bias = float("nan")
+        if used.any():
+            mean_error = errors[used].mean(axis=0)
+            bias = float(
+                np.mean([mean_error @ inverses[c][r] @ mean_error for r in np.flatnonzero(used)])
+            )
+        dof = errors.shape[1]
+        stats = calibration(
+            SimpleNamespace(converged=used, n_runs=n_runs, nees_full=nees, free_dof=dof)
+        )
+        rows.append(
+            {
+                "graph": seed,
+                "method": name,
+                "rate": rate,
+                "covariance": c,
+                "solved": int(solved.sum()),
+                "undefined": int((solved & ~defined).sum()),
+                "flagged_exact": float(exact[solved].mean()) if solved.any() else float("nan"),
+                "rms_error": rms,
+                "bias_ratio": bias / dof,
+                **stats,
+            }
+        )
+    return rows
+
+
+def tasks(seeds, gate_only: bool):
+    for seed in seeds:
+        yield 0, 0.0, seed
+        if gate_only:
+            continue
+        for m in range(1, len(METHODS)):
+            for rate in OUTLIER_RATES:
+                yield m, rate, seed
+
+
+def run(split: str, n_runs: int, gate_only: bool) -> None:
+    seeds = SPLITS[split]
+    with ProcessPoolExecutor() as pool:
+        futures = [
+            pool.submit(condition, m, rate, seed, n_runs)
+            for m, rate, seed in tasks(seeds, gate_only)
+        ]
+        rows = []
+        for future in futures:
+            batch = future.result()
+            rows.extend(batch)
+            first = batch[0]
+            print(
+                f"  graph {first['graph']} {first['method']:<20} rate {first['rate']:<5} "
+                + " ".join(f"{r['covariance']} {r['ratio']:.2f}" for r in batch),
+                flush=True,
+            )
+
+    for seed in seeds:
+        for c in NAMES:
+            mark_fdr([r for r in rows if r["graph"] == seed and r["covariance"] == c])
+    name = f"e5_{split}_gate" if gate_only else f"e5_{split}"
+    write_results(rows, name)
+    report(rows)
+
+
+def calibrated(row) -> bool:
+    return row["usable"] and not row["significant_after_fdr"]
+
+
+def overconfident(row) -> bool:
+    return row["usable"] and row["significant_after_fdr"] and row["ratio"] > 1.0
+
+
+def select(rows, **match):
+    return [r for r in rows if all(r[k] == v for k, v in match.items())]
+
+
+def report(rows) -> None:
+    seeds = sorted({r["graph"] for r in rows})
+    n = len(seeds)
+    print("\nE5 - which covariance a robust back-end should report")
+    print("=" * 84)
+
+    print("\n  Gate: plain least squares, no outliers, calibrated layouts (need 6)")
+    for c in NAMES:
+        gate = select(rows, method="plain least squares", covariance=c)
+        ratios = ", ".join(f"{r['ratio']:.2f}" for r in gate)
+        print(f"  {c:<13} {sum(calibrated(r) for r in gate)}/{n}   NEES/dof {ratios}")
+
+    if not select(rows, method="Huber"):
+        print()
+        return
+
+    print("\n  NEES/dof, median over layouts [min, max]")
+    for method in ("Huber", "Cauchy", "DCS", "GNC"):
+        print(f"\n  {method}")
+        print(f"  {'rate':>6} " + "".join(f"{c:>22}" for c in NAMES))
+        for rate in OUTLIER_RATES:
+            cells = []
+            for c in NAMES:
+                ratios = np.array(
+                    [r["ratio"] for r in select(rows, method=method, rate=rate, covariance=c)]
+                )
+                cells.append(
+                    f"{np.nanmedian(ratios):8.2f} [{np.nanmin(ratios):5.2f},{np.nanmax(ratios):5.2f}]"
+                    if np.isfinite(ratios).any()
+                    else f"{'undefined':>22}"
+                )
+            print(f"  {rate:6.2f} " + "".join(f"{x:>22}" for x in cells))
+
+    judged = [rate for rate in OUTLIER_RATES if rate >= JUDGED_RATE]
+    print(f"\n  H6a: bias term against excess NEES, Huber naive, rates >= {JUDGED_RATE:g}")
+    for rate in judged:
+        level = select(rows, method="Huber", rate=rate, covariance="naive")
+        share = [
+            r["bias_ratio"] / (r["ratio"] - 1.0) for r in level if r["ratio"] > 1.0
+        ]
+        mostly = sum(s > 0.5 for s in share)
+        print(
+            f"  rate {rate:.2f}: bias share of excess, median {np.median(share):.2f}; "
+            f"above half on {mostly}/{len(share)} layouts"
+        )
+
+    print(f"\n  A covariance fixes Huber if calibrated at every rate >= {JUDGED_RATE:g}")
+    print("  on at least 6 layouts")
+    for c in NAMES:
+        fixed = sum(
+            all(
+                calibrated(r)
+                for r in select(rows, graph=seed, method="Huber", covariance=c)
+                if r["rate"] >= JUDGED_RATE
+            )
+            for seed in seeds
+        )
+        print(f"  {c:<13} {fixed}/{n}")
+
+    print("\n  H6c: share of runs where the threshold flags exactly the false closures")
+    for rate in judged:
+        exact = [r["flagged_exact"] for r in select(rows, method="Huber", rate=rate, covariance="inlier")]
+        print(f"  rate {rate:.2f}: median {np.median(exact):.2f}")
+
+    print("\n  H6d: Cauchy and GNC at 0% outliers, calibrated layouts")
+    for method in ("Cauchy", "GNC"):
+        cells = ", ".join(
+            f"{c} {sum(calibrated(r) for r in select(rows, method=method, rate=0.0, covariance=c))}/{n}"
+            for c in NAMES
+        )
+        print(f"  {method:<7} {cells}")
+    print()
+
+
+def build_figure(split: str):
+    """Huber's calibration under each covariance, and the bias term."""
+    rows = read_results(f"e5_{split}")
+    fig, (left, right) = figure(nrows=1, ncols=2, size=(10.0, 4.4))
+    rates = np.array(OUTLIER_RATES)
+
+    for c in NAMES:
+        per_rate = [
+            np.array([r["ratio"] for r in select(rows, method="Huber", rate=x, covariance=c)])
+            for x in rates
+        ]
+        if not any(np.isfinite(v).any() for v in per_rate):
+            continue
+        median = np.array([np.nanmedian(v) if np.isfinite(v).any() else np.nan for v in per_rate])
+        low = np.array([np.nanmin(v) if np.isfinite(v).any() else np.nan for v in per_rate])
+        high = np.array([np.nanmax(v) if np.isfinite(v).any() else np.nan for v in per_rate])
+        colour = COVARIANCE_COLOURS[c]
+        left.fill_between(rates, low, high, color=colour, alpha=0.15, linewidth=0)
+        left.plot(rates, median, marker="o", markersize=5, linewidth=2.0, color=colour, label=c)
+    left.axhline(1.0, color=INK_MUTED, linewidth=1.5, linestyle=":")
+    left.set_yscale("log")
+    left.set_xticks(rates, [f"{x:g}" for x in rates])
+    label(left, "Huber under each covariance", "outlier rate", "mean NEES / dof")
+    left.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
+
+    naive = [select(rows, method="Huber", rate=x, covariance="naive") for x in rates]
+    total = np.array([np.median([r["ratio"] - 1.0 for r in level]) for level in naive])
+    bias = np.array([np.median([r["bias_ratio"] for r in level]) for level in naive])
+    right.plot(rates, total, marker="o", linewidth=2.0, color=INK_MUTED, label="excess NEES / dof")
+    right.plot(rates, bias, marker="o", linewidth=2.0, color="#eb6834", label="bias term / dof")
+    right.set_xticks(rates, [f"{x:g}" for x in rates])
+    label(right, "Where Huber's excess comes from (naive)", "outlier rate", "per dof, median over layouts")
+    right.legend(frameon=False, fontsize=8.5, labelcolor=INK_MUTED, loc="upper left")
+
+    fig.suptitle(
+        f"E5 ({split} layouts): a better covariance for the same Huber estimate",
+        color=INK,
+        fontsize=12,
+        x=0.02,
+        ha="left",
+    )
+    return fig
+
+
+def figures(split: str) -> None:
+    try:
+        print(f"figure written to {save_figure(build_figure(split), f'e5_{split}')}")
+    except ImportError as exc:
+        print(f"figure built but not written: no usable renderer ({exc})")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--split", choices=SPLITS, default="dev")
+    parser.add_argument("--runs", type=int, default=200)
+    parser.add_argument("--gate", action="store_true", help="plain least squares only")
+    parser.add_argument("--figures-only", action="store_true")
+    args = parser.parse_args()
+
+    if args.figures_only:
+        report(read_results(f"e5_{args.split}"))
+    else:
+        run(args.split, args.runs, args.gate)
+    if not args.gate:
+        figures(args.split)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
