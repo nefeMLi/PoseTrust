@@ -111,3 +111,28 @@ def robust_covariances(
         "expected": None if A_expected is None else A_expected @ B_expected @ A_expected,
         "inlier": _inverse_spd(gram[kept].sum(axis=0)),
     }
+
+
+def pull_bias(
+    graph: PoseGraph,
+    poses: list[np.ndarray],
+    kernel,
+    robust_factors: np.ndarray,
+    threshold: float,
+    anchor: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Shift of a robust estimate caused by the robust factors above threshold.
+
+    At the solution their pull is balanced by the other factors, so dropping
+    them would move the estimate by one Gauss-Newton step; the shift they cause
+    is minus that step. Returns it over the free state, with the pulled factors.
+    """
+    e, J = whitened_factors(graph, poses, anchor)
+    s = np.einsum("md,md->m", e, e)
+    robust = np.zeros(len(s), dtype=bool)
+    robust[robust_factors] = True
+    pulled = robust & (s > threshold)
+    w = kernel.weight(s[pulled])
+    trusted = np.einsum("mdi,mdj->ij", J[~pulled], J[~pulled])
+    pull = np.einsum("m,mdi,md->i", w, J[pulled], e[pulled])
+    return -np.linalg.solve(trusted, pull), np.flatnonzero(pulled)

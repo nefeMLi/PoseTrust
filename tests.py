@@ -6,7 +6,8 @@ from scipy.linalg import expm
 
 from posetrust import se2, se3
 from posetrust.covariance import cholesky_factor, selected_inverse
-from posetrust.optimizer import free_mask, gauss_newton, levenberg_marquardt
+from posetrust.graph import PoseGraph
+from posetrust.optimizer import free_mask, gauss_newton, levenberg_marquardt, solve_step
 from posetrust.robust import (
     Cauchy,
     DynamicCovarianceScaling,
@@ -16,7 +17,7 @@ from posetrust.robust import (
     irls,
     loop_closure_indices,
 )
-from posetrust.robust_covariance import robust_covariances
+from posetrust.robust_covariance import pull_bias, robust_covariances
 from posetrust.simulate import (
     NoiseModel,
     loop_closure_edges,
@@ -192,3 +193,27 @@ def test_scalar_model_of_huber_bias():
     assert theta.var() == pytest.approx(1.0 / n, rel=0.1)
     assert sandwich.mean() == pytest.approx(1.0 / n, rel=0.02)
     assert naive.mean() == pytest.approx(1.0 / (n + k * delta / offset), rel=0.02)
+
+    # E6: the pull of the linear-region factors, through the rest, is the bias.
+    r = y - theta[:, None]
+    pulled = r**2 > delta**2
+    shift = np.sum(np.where(pulled, huber.weight(r**2) * r, 0.0), axis=1) / (~pulled).sum(axis=1)
+    assert shift.mean() == pytest.approx(k * delta / n, abs=0.01)
+    assert (theta - shift).mean() == pytest.approx(0.0, abs=0.01)
+
+
+def test_pull_bias_is_minus_one_step_without_the_pulled_factors():
+    scenario = make_scenario(se2, n_poses=12, loop_density=1.0, outlier_rate=0.25, seed=4)
+    graph = sample_graph(se2, scenario, NoiseModel(np.full(3, 0.05)), np.random.default_rng(4))
+    closures, kernel = loop_closure_indices(graph), Huber(2.0)
+    result = irls(graph, list(scenario.truth), kernel, robust_factors=closures)
+    # At Huber's own threshold every other factor has weight 1, so this is exact.
+    shift, pulled = pull_bias(graph, result.poses, kernel, closures, threshold=4.0)
+    assert {k for k, e in enumerate(scenario.edges) if e in scenario.outliers} <= set(pulled)
+
+    trusted = PoseGraph(se2)
+    trusted.poses = graph.poses
+    trusted.factors = [f for k, f in enumerate(graph.factors) if k not in set(pulled)]
+    free = free_mask(12, 3, 0)
+    H, b = trusted.linearize(result.poses)
+    np.testing.assert_allclose(shift, -solve_step(H, b, free)[free], rtol=0, atol=1e-9)

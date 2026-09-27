@@ -560,3 +560,12 @@ nothing about how the pull spreads through a graph.
 - The test graphs are run once. A bug found afterwards is fixed, recorded,
   and both results reported.
 - Non-converged runs are excluded and counted, as before.
+
+### Clarification, 2026-09-27: before the development run
+
+"Removing P would move the estimate by one Gauss-Newton step" holds exactly
+only when every factor outside P has weight 1. Closures between Huber's own
+threshold `δ²` and q keep a weight below 1, and the full step then carries an
+extra term from them (about 6% of `b̂` on the graph it was checked on). The
+formula is unchanged: `b̂` counts only the pull of P, which is the bias it is
+meant to capture. `tests.py` checks the exact case, with q set to `δ²`.
