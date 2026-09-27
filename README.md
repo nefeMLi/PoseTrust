@@ -21,7 +21,7 @@ a variance error. Huber reports far too little, and the cause is not its
 covariance: the false closures it keeps pull the estimate off by an offset no
 covariance describes. Around that offset Huber's error scatters as its
 covariance says; the offset accounts for most of the excess, 85–92% pooled
-over layouts, though less than half on one of the eight. No
+over layouts, though under half on one or two of the eight. No
 covariance computed from the same estimate fixed it on any of eight held-out
 graphs, including the sandwich covariance of M-estimation theory and one
 built from the closures it trusts.
