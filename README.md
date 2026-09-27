@@ -13,12 +13,19 @@ Where the problem is close to linear (small rotational noise, no false loop
 closures left in the graph) the reported covariance is honest. When it fails,
 it fails in the dangerous direction, claiming more certainty than it has: from
 about 0.06–0.1 rad of rotational noise per measurement in most graphs tested,
-severely under uncaught false loop closures, and even after a convex robust
-kernel (Huber) has contained the damage to the trajectory. Across eight graphs,
-Huber's covariance was overconfident on every one; dynamic covariance scaling
-(DCS) kept it honest on six.
+and severely under uncaught false loop closures.
 
-![E4: trajectory error and calibration against the outlier rate](figures/e4_perceptual_aliasing.svg)
+Robust back-ends, which down-weight suspect loop closures, get it wrong in two
+different ways. Cauchy and GNC report slightly too much uncertainty, mostly
+a variance error. Huber reports far too little, and the cause is not its
+covariance: the false closures it keeps pull the estimate off by an offset no
+covariance describes. Around that offset Huber's error scatters as its
+covariance says; the offset accounts for almost all of the excess. No
+covariance computed from the same estimate fixed it on any of eight held-out
+graphs, including the sandwich covariance of M-estimation theory and one
+built from the closures it trusts.
+
+![E5: Huber under each covariance, and where its excess comes from](figures/e5_test.svg)
 
 Everything is simulated: the same measurement set is solved under hundreds of
 noise draws, and the spread of the estimates around the known truth is compared
@@ -40,6 +47,7 @@ bootstrap interval and a Benjamini-Hochberg correction across each experiment.
 | E2 loop-closure density | Sparse graphs are only slightly overconfident: at most +4.7%, significant only for SE(3) with 0–1 closures. |
 | E3 rotational noise | Calibration breaks from 0.06 rad (SE(3)) and 0.10 rad (SE(2)) and degrades quickly after that. At 0.22 rad only 1.5% of SE(3)'s 95% ellipsoids contain the truth. Across eight loop-closure layouts the break point ranges over 0.06–0.15 rad (SE(3)) and 0.06–0.22 rad (SE(2)); no layout is ever conservative. |
 | E4 false loop closures | Across eight loop-closure layouts, Huber is overconfident at every outlier rate on all eight (NEES/dof 1.35–3.25 on the original graph, up to 15.6 on others) while keeping the trajectory error at 30% outliers to 0.10–0.22, against 0.6–1.7 for plain least squares where it converges. DCS stays accurate and calibrated on six layouts and turns overconfident on two, from 15% and 25% outliers. Cauchy and GNC are accurate and mostly conservative. |
+| E5 which covariance to report | On eight held-out layouts, no covariance of Huber's estimate is calibrated at 10% outliers or more: naive, sandwich, expected sandwich or inlier-only, 0 of 8 each. The bias term is most of Huber's excess NEES (median 91–99%, over half on 6–8 layouts at each rate). The expected sandwich calibrates Cauchy at 0% outliers (7 of 8 layouts) but overshoots GNC. |
 
 ![E3: calibration against rotational noise](figures/e3_nonlinearity.svg)
 
@@ -52,12 +60,7 @@ rather than a finding.
 
 ![E3 across graphs: NEES against rotational noise for each layout](figures/e3_graphs.svg)
 
-Why Huber stays overconfident: its weight on a residual shrinks but never
-reaches zero, so a false closure still enters the information matrix the
-covariance is computed from, as if it were a genuine, weaker measurement,
-and still pulls the estimate slightly. The reported covariance shrinks while
-the error does not. Redescending kernels give a gross outlier almost zero
-weight, which removes both effects.
+![E4: trajectory error and calibration against the outlier rate](figures/e4_perceptual_aliasing.svg)
 
 ![E4 across graphs: calibration of each robust back-end on eight layouts](figures/e4_graphs.svg)
 
@@ -69,6 +72,29 @@ starts at the rate that adds a false closure pointing one pose away from its
 true end, the smallest offset in the sweep, and Cauchy fails from the same
 rate. Two other layouts get such a closure without failing, so that is not
 the whole explanation.
+
+Why Huber stays overconfident: its weight on a residual shrinks but never
+reaches zero, so each false closure keeps pulling the estimate with a bounded
+force. In a scalar model, worked out before E5 ran and checked in `tests.py`,
+k false closures among n good ones shift the estimate by kδ/n while leaving
+its variance almost untouched, so the reported covariance can be right about
+the scatter and still badly overconfident. On one graph at 10% outliers,
+Huber's covariance matches the scatter of its errors to 2%, while the mean
+error alone is more than half the size of that scatter. Redescending kernels
+give a gross outlier almost no pull, which is why DCS avoids the problem.
+
+E5 was pre-registered with a development and a test split: the code and the
+rules were fixed on the E4 layouts, then run once on eight new ones.
+
+- H6a, bias makes up most of Huber's excess: supported.
+- H6b, the sandwich helps Huber without fixing it: mostly. It lowers the NEES
+  on 6–8 of 8 layouts depending on the rate, and never makes Huber calibrated.
+- H6c, the inlier covariance is calibrated when the threshold flags exactly
+  the false closures: falsified. Those runs have NEES/dof 1.9–7.1.
+- H6d, the sandwich removes Cauchy's and GNC's conservatism: falsified. The
+  sandwich as pre-registered overstates its middle term, found after the
+  development run (see [HYPOTHESES.md](HYPOTHESES.md)). The textbook form,
+  added then and so exploratory, calibrates Cauchy but overshoots GNC.
 
 Limitations:
 
@@ -82,6 +108,10 @@ Limitations:
 - Cauchy and GNC also down-weight correct measurements, which inflates the
   covariance they report.
 - Graphs have at most twenty poses and are solved with dense linear algebra.
+- E5 changes only the reported covariance, never the estimate, so it can show
+  that Huber's error is bias but not remove it.
+- The bias share includes a cross term between spread and bias, up to about a
+  tenth of the excess at 20% outliers, so it is close to a split but not exact.
 
 ## Related work
 
@@ -97,7 +127,9 @@ scaling [5] (its closed form, and the version tested here) and graduated
 non-convexity [6] were evaluated on the trajectory they recover. What this
 repository adds is the other half: whether the covariance they report is
 still honest once the outliers are handled. NEES and its chi-squared test
-follow Bar-Shalom et al. [7].
+follow Bar-Shalom et al. [7]. The sandwich covariance of an M-estimator
+[8, 9] corrects the variance when the model is wrong, but not bias [10],
+which is the distinction E5 turns on.
 
 1. T. Bailey, J. Nieto, J. Guivant, M. Stevens, E. Nebot. Consistency of the
    EKF-SLAM algorithm. IROS 2006.
@@ -113,6 +145,12 @@ follow Bar-Shalom et al. [7].
    robust spatial perception. RA-L 5(2), 2020.
 7. Y. Bar-Shalom, X. R. Li, T. Kirubarajan. Estimation with Applications to
    Tracking and Navigation. Wiley, 2001.
+8. P. J. Huber. The behavior of maximum likelihood estimates under
+   nonstandard conditions. Fifth Berkeley Symposium, 1967.
+9. H. White. A heteroskedasticity-consistent covariance matrix estimator and a
+   direct test for heteroskedasticity. Econometrica 48(4), 1980.
+10. D. A. Freedman. On the so-called "Huber sandwich estimator" and "robust
+    standard errors". The American Statistician 60(4), 2006.
 
 ## Installation
 
@@ -133,6 +171,8 @@ python -m experiments.e3_nonlinearity
 python -m experiments.e3_nonlinearity --graphs
 python -m experiments.e4_perceptual_aliasing
 python -m experiments.e4_perceptual_aliasing --graphs
+python -m experiments.e5_robust_covariance --split dev
+python -m experiments.e5_robust_covariance --split test
 ```
 
 Each script writes its results to `results/` and its figure to `figures/`.
@@ -140,7 +180,8 @@ Add `--figures-only` to redraw a figure from the saved results in seconds.
 E1 takes about a minute, E2 about ten, E3 up to an hour. The rest run in
 parallel; on twelve cores E3 `--graphs` takes about six minutes, E4 about
 twenty and E4 `--graphs` a few hours, most of it plain least squares, which
-on some layouts never converges and runs to its iteration limit.
+on some layouts never converges and runs to its iteration limit. Each E5 split
+takes about two hours.
 
 The core checks run with `pytest tests.py`.
 
@@ -152,6 +193,7 @@ posetrust/         the SLAM back-end and the statistics
   graph.py           the pose graph, residuals and analytic Jacobians
   optimizer.py       Gauss-Newton and Levenberg-Marquardt, gauge fixing
   robust.py          Huber, Cauchy, DCS, IRLS, GNC
+  robust_covariance.py  naive, sandwich, expected and inlier covariances
   covariance.py      marginal and relative covariances by selected inversion
   simulate.py        scenarios, measurement noise, the Monte Carlo harness
   stats.py           NEES, chi-squared tests, coverage, consistency()
