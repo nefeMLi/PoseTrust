@@ -569,3 +569,23 @@ threshold `δ²` and q keep a weight below 1, and the full step then carries an
 extra term from them (about 6% of `b̂` on the graph it was checked on). The
 formula is unchanged: `b̂` counts only the pull of P, which is the bias it is
 meant to capture. `tests.py` checks the exact case, with q set to `δ²`.
+
+### Amendment, 2026-09-27: after the development run, before the test run
+
+**The development layouts.** The threshold rule picks q = 0.999 (mean
+|NEES/dof − 1| of 0.185, against 0.255 and 0.348), now fixed in the code.
+E6 removes most of Huber's overconfidence but not all of it: median NEES/dof
+1.07, 1.16 and 1.29 at 10%, 20% and 30% outliers, against 2.68, 4.91 and
+7.72 for the naive covariance, so H7a holds on none of the eight. H7b holds
+on eight, H7c on seven. Reject-and-refit is within [0.9, 1.1] on all eight,
+with medians of 1.00-1.01.
+
+**Nothing about E6 changes.** H7a is judged on the test graphs as written.
+
+**Added, as exploratory.** The same covariance with the shift taken from the
+converged refit (Huber's estimate minus the refit estimate) in place of the
+one-step `b̂`. If it is calibrated where E6 is not, what E6 leaves over is
+the error of the first-order step, not of the idea. It was added after the
+development results, so nothing it shows is confirmatory.
+
+The test graphs have not been run.

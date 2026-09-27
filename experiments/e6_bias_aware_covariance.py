@@ -49,9 +49,11 @@ SPLITS = {
 METHODS = [("Huber", Huber(DELTA)), ("DCS", DynamicCovarianceScaling(THRESHOLD))]
 QUANTILES = (0.95, 0.99, 0.999)
 # Fixed from the development run by the rule in HYPOTHESES.md; None until then.
-CHOSEN_QUANTILE = None
+CHOSEN_QUANTILE = 0.999
 PRACTICAL = (0.9, 1.1)
-ESTIMATORS = ["naive"] + [f"{kind}_{q}" for q in QUANTILES for kind in ("e6", "refit")]
+# e6full (exploratory, added after the development run) uses the converged refit's
+# shift in place of the one-step estimate.
+ESTIMATORS = ["naive"] + [f"{kind}_{q}" for q in QUANTILES for kind in ("e6", "refit", "e6full")]
 COLOURS = {"naive": INK_MUTED, "e6": "#2a78d6", "refit": "#eb6834"}
 
 
@@ -105,6 +107,10 @@ def condition(method: int, rate: float, seed: int, turn: float, n_runs: int) -> 
                 refit_info = refit.information[np.ix_(free, free)]
                 nees[f"refit_{q}"][r] = refit_error @ refit_info @ refit_error
                 sq_error[f"refit_{q}"][r] = np.mean(refit_error**2)
+                full = errors_of(refit.poses, result.poses)
+                full_cov = np.linalg.inv(information) + np.outer(full, full)
+                nees[f"e6full_{q}"][r] = error @ np.linalg.solve(full_cov, error)
+                sq_error[f"e6full_{q}"][r] = sq_error["naive"][r]
 
     dof = int(free.sum())
     rows = []
@@ -199,7 +205,7 @@ def report(rows) -> None:
 
     for method in ("Huber", "DCS"):
         print(f"\n  {method}: NEES/dof, median over graphs [min, max], q = {q}")
-        shown = ["naive", f"e6_{q}", f"refit_{q}"]
+        shown = ["naive", f"e6_{q}", f"refit_{q}", f"e6full_{q}"]
         print(f"  {'rate':>6} " + "".join(f"{c:>22}" for c in shown))
         for rate in OUTLIER_RATES:
             cells = []
@@ -227,6 +233,8 @@ def report(rows) -> None:
         return all(abs(a["ratio"] - b["ratio"]) < 0.05 for a, b in pairs)
 
     print(f"\n  H7c: DCS changed by less than 0.05 at every rate: {sum(unchanged(g) for g in gs)}/{n}")
+    print(f"\n  Exploratory, E6 with the converged refit's shift: within [{low}, {high}] at every rate "
+          f">= {JUDGED_RATE:g}: {sum(every_rate(rows, g, 'Huber', f'e6full_{q}', within) for g in gs)}/{n}")
     print(f"\n  H7d: reject-and-refit within [{low}, {high}] at every rate >= {JUDGED_RATE:g}: "
           f"{sum(every_rate(rows, g, 'Huber', refit, within) for g in gs)}/{n}")
     print()
