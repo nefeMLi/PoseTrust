@@ -418,3 +418,21 @@ its offset shows up in the bias term rather than the variance. For plain
 least squares it equals the naive covariance exactly, so the gate is met by
 construction; the gate rows are kept as a check of the code. H6b and H6d
 refer to this sandwich. Nothing else changes.
+
+### A scalar model, worked out before the development run
+
+One unknown θ, n inliers `y = θ + ε` and k false measurements
+`y = θ + Δ + ε`, with `ε ~ N(0, 1)` and `Δ` well beyond the Huber threshold
+`δ`. Each outlier then pulls on the estimate with a fixed force `δ`, so
+
+- `θ̂ = ȳ + kδ/n`: variance `1/n`, bias `kδ/n`;
+- naive covariance `1/(n + kδ/Δ)`, so `E[NEES] ≈ (1 + k²δ²/n)(1 + kδ/(nΔ))`;
+- in Huber's linear region `w + 2ρ''s = 0`, so `A = n`, the sandwich is
+  about `1/n`, and `E[NEES] ≈ 1 + k²δ²/n`;
+- the inlier covariance is `1/n` as well, with the same `E[NEES]`.
+
+The bias term `k²δ²/n` is what is left once the variance is right, and no
+covariance can remove it. A redescending kernel gives a gross outlier almost
+no pull, which is why DCS avoids it. The model agrees with H6a and H6b and
+disagrees with H6c, which predicted the inlier covariance calibrated. H6c is
+left as written and will be judged as written.
