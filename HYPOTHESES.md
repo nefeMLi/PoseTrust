@@ -303,3 +303,97 @@ if it holds on at least six of the eight layouts, judged at outlier rates of
 correction at every such rate; DCS holds if it is overconfident after
 correction at none of them. Otherwise E4 is reported as layout-dependent, with
 the counts.
+
+---
+
+## E5: what covariance should a robust back-end report?
+
+Dated 2026-09-27, before any of the code below exists. The E5 of the
+original plan (real data) was cut; this E5 replaces it.
+
+### The question
+
+After IRLS converges, every back-end here reports `(JᵀWJ)⁻¹`, the inverse of
+the information matrix with the final robust weights treated as if they were
+known constants. E4 shows that this is overconfident for Huber and
+conservative for Cauchy and GNC. Is there a covariance that stays calibrated
+for the same estimate?
+
+Statistics already has a candidate: the sandwich covariance of an M-estimator
+(Huber, 1967; White, 1980). It corrects the variance when the model is wrong
+but, as Freedman (2006) points out, it does nothing about bias. A search of
+the robust-SLAM literature found no study of the reported covariance's
+calibration, only of trajectory accuracy. So the open part is whether
+Huber's overconfidence is a variance problem, which a better covariance can
+fix, or a bias problem, which it cannot.
+
+### Covariances compared
+
+All are computed from the same converged estimate; only the reported
+covariance changes. With whitened residuals `e_i`, whitened Jacobians `J_i`,
+`s_i = |e_i|²` and the kernel `ρ(s)`, so that `w_i = ρ'(s_i)`:
+
+| Name | Covariance |
+|---|---|
+| naive | `(Σ w_i J_iᵀJ_i)⁻¹`, what every back-end reports now |
+| sandwich | `A⁻¹ B A⁻¹`, with `A = Σ (w_i J_iᵀJ_i + 2ρ''(s_i) J_iᵀe_i e_iᵀJ_i)` and `B = Σ w_i² J_iᵀe_i e_iᵀJ_i` |
+| inlier | `(Σ_{i kept} J_iᵀJ_i)⁻¹`, dropping loop closures with `s_i` above the 95% chi-squared threshold used in E4 |
+
+Odometry factors have `w_i = 1` and `ρ'' = 0` throughout, as in E4. Each is
+applied to Huber, Cauchy, DCS and GNC at every E4 outlier rate.
+
+**Gate.** With plain least squares and no outliers the naive covariance is
+calibrated (E1, E4), and the sandwich must be too. It may not be: E4's graph
+has 57 free parameters against 117 residuals, and the plain sandwich
+underestimates the variance when the parameters use that large a share of
+the residual degrees of freedom. If it fails the gate on the development
+layouts, it is replaced before any test run by the leverage-corrected form,
+`B = Σ w_i² J_iᵀ (I − P_i)^(-1/2) e_i e_iᵀ (I − P_i)^(-1/2) J_i`, where
+`P_i = w_i J_i A⁻¹ J_iᵀ` is the factor's block of the hat matrix. If that
+also fails, H6b and H6d are reported as untestable here.
+
+### Bias and variance
+
+Across the Monte Carlo runs of one condition, with mean error `ē` over runs,
+the mean NEES splits into a spread term and a bias term
+`b = mean_k ēᵀ Σ_k⁻¹ ē`. Reported for every condition, per covariance, as
+`b / dof` next to NEES/dof.
+
+### Predictions
+
+**H6a (bias).** For Huber at outlier rates of 10% and above, the bias term
+accounts for more than half of the excess NEES (`b > (NEES − dof) / 2`) under
+the naive covariance. Confidence low; it could equally be the weights.
+
+**H6b (sandwich).** The sandwich covariance lowers Huber's NEES/dof at every
+corrupted rate but leaves it overconfident at 20% and above. Falsified if it
+is calibrated there, which would mean the problem was variance after all.
+
+**H6c (inlier).** The inlier covariance is calibrated for Huber wherever the
+threshold flags exactly the false closures, and overconfident where it
+misses one. Reported with the share of runs where the flagged set is exact.
+
+**H6d (conservative kernels).** The sandwich covariance removes the
+conservatism of Cauchy and GNC at 0% outliers.
+
+### Analysis rules, fixed now
+
+- **Development and test layouts.** Everything is developed on the E4
+  layouts, seeds 300 to 1000. The final numbers come from eight new layouts,
+  seeds 1100 to 1800, run once, after the code and these rules are
+  committed. Any change made after seeing development results is recorded
+  here as an amendment before the test run.
+- **Calibrated** means not overconfident and not conservative after
+  Benjamini-Hochberg, within each layout's sweep, as in E4.
+- **A covariance fixes Huber** if Huber under it is calibrated at every rate
+  of 10% and above on at least six of the eight test layouts, the same form
+  as the E4 rule.
+- 200 runs per condition, the E4 noise model, trajectory and outlier rates.
+
+### Cut rules
+
+- If the sandwich covariance cannot be made numerically stable (`A` not
+  positive definite), that is reported, not patched by adding damping after
+  the fact.
+- The test layouts are run once. A bug found after that run is fixed, the
+  fix recorded here, and both results reported.
