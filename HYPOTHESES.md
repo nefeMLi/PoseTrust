@@ -350,7 +350,9 @@ the residual degrees of freedom. If it fails the gate on the development
 layouts, it is replaced before any test run by the leverage-corrected form,
 `B = Σ w_i² J_iᵀ (I − P_i)^(-1/2) e_i e_iᵀ (I − P_i)^(-1/2) J_i`, where
 `P_i = w_i J_i A⁻¹ J_iᵀ` is the factor's block of the hat matrix. If that
-also fails, H6b and H6d are reported as untestable here.
+also fails, H6b and H6d are reported as untestable here. A covariance passes
+the gate if it is calibrated on at least six of the eight development
+layouts (added 2026-09-27, before the gate was run).
 
 ### Bias and variance
 
@@ -397,3 +399,22 @@ conservatism of Cauchy and GNC at 0% outliers.
   the fact.
 - The test layouts are run once. A bug found after that run is fixed, the
   fix recorded here, and both results reported.
+
+### Amendment, 2026-09-27: the sandwich as written cannot exist here
+
+Found in a five-run smoke test of the code, before the gate or any
+development run. The sandwich above estimates its middle term from the
+residuals, `B = Σ w_i² J_iᵀe_i e_iᵀJ_i`. Each factor adds a rank-one term, and
+E4's graph has 39 factors against 57 free parameters, so `B` is singular for
+every estimate and the NEES under it is meaningless (the smoke test gave
+values near 10¹⁴). This is structural, not a bug, and the leverage-corrected
+form has the same rank. Both are dropped.
+
+In their place, the model-based sandwich, `A⁻¹ (Σ w_i² J_iᵀJ_i) A⁻¹`, which
+takes the middle term's expectation under the noise model instead of
+estimating it. It suits this problem: a false closure here is normal noise
+around a wrong endpoint, so its noise covariance is the modelled one, and
+its offset shows up in the bias term rather than the variance. For plain
+least squares it equals the naive covariance exactly, so the gate is met by
+construction; the gate rows are kept as a check of the code. H6b and H6d
+refer to this sandwich. Nothing else changes.
