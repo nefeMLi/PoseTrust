@@ -21,4 +21,5 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install gtsam "numpy<2" scipy pytest
+      - run: python -c "import gtsam"  # fail here rather than let the tests skip
       - run: pytest tests.py -k gtsam
