@@ -15,6 +15,7 @@ class Factor:
     j: int
     measurement: np.ndarray
     information: np.ndarray
+    measurement_inverse: np.ndarray
 
 
 class PoseGraph:
@@ -37,36 +38,49 @@ class PoseGraph:
     def add_factor(
         self, i: int, j: int, measurement: np.ndarray, information: np.ndarray
     ) -> None:
+        measurement = np.asarray(measurement, dtype=float)
         self.factors.append(
             Factor(
                 i,
                 j,
-                np.asarray(measurement, dtype=float),
+                measurement,
                 np.asarray(information, dtype=float),
+                self.lie.inverse(measurement),
             )
         )
 
     def residual(self, factor: Factor, poses: list[np.ndarray]) -> np.ndarray:
         """r = log(Z^-1 Ti^-1 Tj)."""
+        return self._residual(factor, self.lie.inverse(poses[factor.i]), poses[factor.j])
+
+    def _residual(self, factor: Factor, Ti_inv: np.ndarray, Tj: np.ndarray) -> np.ndarray:
         lie = self.lie
-        predicted = lie.compose(lie.inverse(poses[factor.i]), poses[factor.j])
-        return lie.log(lie.compose(lie.inverse(factor.measurement), predicted))
+        return lie.log(lie.compose(factor.measurement_inverse, lie.compose(Ti_inv, Tj)))
+
+    def residuals(self, poses: list[np.ndarray]) -> list[np.ndarray]:
+        """Residual of every factor, inverting each pose once."""
+        inverses = [self.lie.inverse(T) for T in poses]
+        return [self._residual(f, inverses[f.i], poses[f.j]) for f in self.factors]
 
     def factor_jacobians(
         self, factor: Factor, poses: list[np.ndarray]
     ) -> tuple[np.ndarray, np.ndarray]:
         """Residual Jacobians for right perturbations of Ti and Tj."""
-        lie = self.lie
         r0 = self.residual(factor, poses)
+        return self._jacobians(r0, self.lie.inverse(poses[factor.j]), poses[factor.i])
+
+    def _jacobians(
+        self, r0: np.ndarray, Tj_inv: np.ndarray, Ti: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        lie = self.lie
         jr_inv = np.linalg.inv(lie.right_jacobian(r0))
-        m_inv = lie.compose(lie.inverse(poses[factor.j]), poses[factor.i])
+        m_inv = lie.compose(Tj_inv, Ti)
         return -jr_inv @ lie.adjoint(m_inv), jr_inv
 
     def chi2(self, poses: list[np.ndarray]) -> float:
         """Sum of r^T Omega r over all factors."""
         total = 0.0
-        for factor in self.factors:
-            r = self.residual(factor, poses)
+        for factor, r in zip(self.factors, self.residuals(poses)):
             total += float(r @ factor.information @ r)
         return total
 
@@ -79,20 +93,23 @@ class PoseGraph:
         b = np.zeros(n)
         d = self.dof
 
+        # Each pose is inverted once, not once per factor it touches.
+        inverses = [self.lie.inverse(T) for T in poses]
         for index, factor in enumerate(self.factors):
-            r = self.residual(factor, poses)
-            Ji, Jj = self.factor_jacobians(factor, poses)
+            r = self._residual(factor, inverses[factor.i], poses[factor.j])
+            Ji, Jj = self._jacobians(r, inverses[factor.j], poses[factor.i])
             omega = factor.information
             if weights is not None:
                 omega = weights[index] * omega
             si, sj = factor.i * d, factor.j * d
 
-            H[si : si + d, si : si + d] += Ji.T @ omega @ Ji
-            H[si : si + d, sj : sj + d] += Ji.T @ omega @ Jj
-            H[sj : sj + d, si : si + d] += Jj.T @ omega @ Ji
-            H[sj : sj + d, sj : sj + d] += Jj.T @ omega @ Jj
-            b[si : si + d] += Ji.T @ omega @ r
-            b[sj : sj + d] += Jj.T @ omega @ r
+            Ji_omega, Jj_omega = Ji.T @ omega, Jj.T @ omega
+            H[si : si + d, si : si + d] += Ji_omega @ Ji
+            H[si : si + d, sj : sj + d] += Ji_omega @ Jj
+            H[sj : sj + d, si : si + d] += Jj_omega @ Ji
+            H[sj : sj + d, sj : sj + d] += Jj_omega @ Jj
+            b[si : si + d] += Ji_omega @ r
+            b[sj : sj + d] += Jj_omega @ r
 
         return H, b
 

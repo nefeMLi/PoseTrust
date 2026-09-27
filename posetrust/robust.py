@@ -116,8 +116,7 @@ class GemanMcClure:
 def squared_residuals(graph: PoseGraph, poses: list[np.ndarray]) -> np.ndarray:
     """r^T Omega r for every factor."""
     out = np.empty(len(graph.factors))
-    for index, factor in enumerate(graph.factors):
-        r = graph.residual(factor, poses)
+    for index, (factor, r) in enumerate(zip(graph.factors, graph.residuals(poses))):
         out[index] = r @ factor.information @ r
     return out
 
