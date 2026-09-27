@@ -1,5 +1,7 @@
 # PoseTrust
 
+[![tests](https://github.com/nefeMLi/PoseTrust/actions/workflows/tests.yml/badge.svg)](https://github.com/nefeMLi/PoseTrust/actions/workflows/tests.yml)
+
 ## Introduction
 
 Pose-graph SLAM reports a covariance alongside its estimate: a claim about how
