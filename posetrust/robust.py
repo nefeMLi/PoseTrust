@@ -61,7 +61,7 @@ class Cauchy:
 
 @dataclass(frozen=True)
 class DynamicCovarianceScaling:
-    """Dynamic covariance scaling, the closed form of switchable constraints."""
+    """Dynamic covariance scaling (Agarwal et al., 2013)."""
 
     phi: float
 
