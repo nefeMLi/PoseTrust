@@ -14,24 +14,26 @@ dangerous case.
 ## What I found
 
 **Rotational noise.** With small heading noise the covariance is fine. Past roughly 0.06 to 0.1 rad per
-measurement it becomes overconfident, and it gets bad fast: at 0.22 rad, only 1.5% of the 95% confidence
-ellipsoids in SE(3) actually contain the truth. Where exactly it breaks depends on the graph (anywhere from
-0.06 to 0.22 rad over the eight loop-closure layouts I tried), but it never goes the cautious way.
+measurement it becomes overconfident, and it gets bad fast: at 0.22 rad in SE(3), the nominal 95% confidence
+region for the whole trajectory contains the truth in only 1.5% of runs. Where exactly it breaks varies a lot
+between graphs, but it never goes the cautious way.
 
 ![Where calibration breaks depends on the layout](figures/rotational_noise.svg)
 
 **False loop closures.** I added wrong loop closures (a measurement pointing at the wrong pose) and compared four
-robust back-ends. Huber keeps the trajectory in reasonable shape, with errors of 0.10 to 0.22 at 30% outliers
-where plain least squares ends up at 0.6 to 1.7, but its covariance is overconfident on all 8 layouts, with NEES
-per dof up to 15.6. DCS stays honest on 6 of the 8. Cauchy and GNC are mostly a little too cautious.
+robust back-ends. Huber keeps the trajectory far closer to the truth than plain least squares does, but its
+covariance is overconfident on all 8 layouts, on some by more than a factor of 10. DCS stays honest on 6 of the 8.
+Cauchy and GNC are mostly a little too cautious.
 
 ![Calibration of each robust back-end on eight layouts](figures/false_loop_closures.svg)
 
 **Why Huber gets it wrong.** Huber turns the weight of a bad closure down but never to zero, so every bad closure
 keeps pulling the estimate a bit, and always in the same direction. That makes the error a bias rather than
 noise, and a covariance can't describe a shift that is the same in every run. When I split Huber's extra NEES into
-spread and bias, the bias accounts for 91 to 98% of it. If I drop the closures Huber flags as suspicious and
-solve again, the covariance is honest again: median NEES per dof of 1.00 to 1.01, and within 10% on all 8 layouts.
+spread and bias, the bias term explains roughly 90 to 98% of it (each run has its own covariance, so this is a
+close diagnostic rather than an exact split). If I drop the closures Huber flags as suspicious and solve again,
+NEES per dof comes back to about 1 on all 8 layouts. I picked the threshold for flagging on these same
+simulations, though, so take the refit result as exploratory rather than a clean test.
 
 ![Huber's extra NEES is mostly bias, and refitting without the flagged closures fixes it](figures/huber_bias.svg)
 
@@ -49,7 +51,8 @@ solve again, the covariance is honest again: median NEES per dof of 1.00 to 1.01
 - It's all simulation, with small graphs (at most 20 poses). My false closures are always "right measurement, wrong
   pose", and real outliers can look different.
 - The robust back-end results come from one trajectory with eight different loop-closure layouts.
-- The refit flags closures with a fixed threshold (the 99.9% chi-squared quantile).
+- The refit threshold (the 99.9% chi-squared quantile) was chosen on the same layouts it is reported on.
+- The error I use to compare back-ends mixes metres and radians, so it only works as a relative comparison.
 
 ## Background
 
