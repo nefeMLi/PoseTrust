@@ -64,7 +64,10 @@ def report(rows) -> None:
             f"from {min(first.values())}-{max(first.values())} rad across layouts; conservative anywhere: {conservative}"
         )
     r = next(r for r in rows if r["graph"] == SEED and r["group"] == "SE(3)" and r["rotation_sigma"] == 0.22)
-    print(f"  SE(3) at 0.22 rad: 95% ellipsoids contain the truth in {r['coverage_empirical'][3]:.1%} of runs\n")
+    # Coverage is of the joint region for the whole trajectory (full-state NEES), not of single poses.
+    print(
+        f"  SE(3) at 0.22 rad: the 95% joint region contains the true trajectory in {r['coverage_empirical'][3]:.1%} of runs\n"
+    )
 
 
 def plot(rows) -> None:
