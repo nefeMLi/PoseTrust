@@ -41,6 +41,7 @@ GRAPH_SEEDS = [300, 400, 500, 600, 700, 800, 900, 1000]
 THRESHOLD = chi2_threshold(LIE.DOF, 0.95)
 DELTA = float(np.sqrt(THRESHOLD))
 # Closures above this chi-squared quantile at Huber's solution are dropped before refitting.
+# I picked 0.999 over 0.95 and 0.99 on these same layouts, so the refit result is not a held-out test.
 FLAG = chi2.ppf(0.999, LIE.DOF)
 
 
@@ -80,7 +81,9 @@ def condition(method: str, rate: float, n_runs: int, seed: int) -> dict:
         solver=METHODS[method],
         initialize="odometry",
     )
-    errors = result.errors[result.converged][:, 1:]  # the first pose is anchored
+    # RMS of the tangent-space error over the free poses. It mixes metres and radians, so it is only
+    # good for comparing back-ends with each other, not as a physical trajectory error.
+    errors = result.errors[result.converged][:, 1:]
     rms = float(np.sqrt(np.mean(errors**2))) if errors.size else float("nan")
     return {"graph": seed, "method": method, "rate": rate, "rms_error": rms, **calibration(result)}
 
@@ -150,13 +153,14 @@ def report(rows, huber_rows) -> None:
     print(f"  Huber NEES/dof up to {max(r['ratio'] for r in rows if r['method'] == 'Huber'):.1f}")
     for method in ("Huber", "plain least squares"):
         at30 = [r["rms_error"] for r in rows if r["method"] == method and r["rate"] == 0.30 and r["usable"]]
-        print(f"  {method} trajectory error at 30%: {min(at30):.2f}-{max(at30):.2f} ({len(at30)} layouts converged)")
+        print(f"  {method} tangent-space RMS at 30%: {min(at30):.2f}-{max(at30):.2f} ({len(at30)} layouts converged)")
     for method in ("Cauchy", "GNC"):
         ratios = [r["ratio"] for r in rows if r["method"] == method]
         print(
             f"  {method} NEES/dof: median {np.median(ratios):.2f}, overconfident in {sum(map(overconfident, [r for r in rows if r['method'] == method]))} conditions"
         )
 
+    # Each run has its own information matrix, so bias share is a close diagnostic, not an exact split.
     print("\n  Huber   rate   NEES/dof  bias share   refit NEES/dof")
     for rate in OUTLIER_RATES[1:]:
         level = [r for r in huber_rows if r["rate"] == rate]
